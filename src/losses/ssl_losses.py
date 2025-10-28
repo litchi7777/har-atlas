@@ -3,10 +3,11 @@ Self-Supervised Learning (SSL) 損失関数
 
 SimCLR、MoCo、BYOL等のSSL手法で使用される損失関数を実装
 """
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
 
 
 class NTXentLoss(nn.Module):
@@ -22,7 +23,7 @@ class NTXentLoss(nn.Module):
         https://arxiv.org/abs/2002.05709
     """
 
-    def __init__(self, temperature: float = 0.5, reduction: str = 'mean'):
+    def __init__(self, temperature: float = 0.5, reduction: str = "mean"):
         """
         Args:
             temperature: スケーリング温度パラメータ（小さいほど hard negative mining）
@@ -58,21 +59,22 @@ class NTXentLoss(nn.Module):
 
         # 対角成分をマスク（自分自身との類似度を除外）
         mask = torch.eye(2 * batch_size, dtype=torch.bool, device=device)
-        sim_matrix = sim_matrix.masked_fill(mask, float('-inf'))
+        sim_matrix = sim_matrix.masked_fill(mask, float("-inf"))
 
         # 正例ペアのインデックスを作成
         # (i, i+batch_size) と (i+batch_size, i) が正例ペア
         positive_indices = torch.arange(batch_size, device=device)
-        positive_indices = torch.cat([
-            positive_indices + batch_size,  # z1のpositive
-            positive_indices  # z2のpositive
-        ])
+        positive_indices = torch.cat(
+            [positive_indices + batch_size, positive_indices]  # z1のpositive  # z2のpositive
+        )
 
         # 正例の類似度を取得
-        pos_sim = torch.cat([
-            torch.diag(sim_matrix[:batch_size, batch_size:]),
-            torch.diag(sim_matrix[batch_size:, :batch_size])
-        ])
+        pos_sim = torch.cat(
+            [
+                torch.diag(sim_matrix[:batch_size, batch_size:]),
+                torch.diag(sim_matrix[batch_size:, :batch_size]),
+            ]
+        )
 
         # LogSumExp計算による安定化
         # loss = -log(exp(pos) / sum(exp(all)))
@@ -82,9 +84,9 @@ class NTXentLoss(nn.Module):
 
         loss = -numerator + denominator
 
-        if self.reduction == 'mean':
+        if self.reduction == "mean":
             return loss.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return loss.sum()
         else:
             return loss
@@ -106,11 +108,7 @@ class SimSiamLoss(nn.Module):
         super().__init__()
 
     def forward(
-        self,
-        p1: torch.Tensor,
-        p2: torch.Tensor,
-        z1: torch.Tensor,
-        z2: torch.Tensor
+        self, p1: torch.Tensor, p2: torch.Tensor, z1: torch.Tensor, z2: torch.Tensor
     ) -> torch.Tensor:
         """
         SimSiam損失を計算
@@ -125,10 +123,13 @@ class SimSiamLoss(nn.Module):
             損失値
         """
         # コサイン類似度を使用した対称的な損失
-        loss = -(
-            self._cosine_similarity(p1, z2.detach()).mean() +
-            self._cosine_similarity(p2, z1.detach()).mean()
-        ) * 0.5
+        loss = (
+            -(
+                self._cosine_similarity(p1, z2.detach()).mean()
+                + self._cosine_similarity(p2, z1.detach()).mean()
+            )
+            * 0.5
+        )
 
         return loss
 
@@ -195,6 +196,84 @@ class BarlowTwinsLoss(nn.Module):
         return matrix.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
 
+class IntegratedSSLLoss(nn.Module):
+    """
+    統合型SSL損失 - 複数のSSLタスクの損失を管理
+
+    calc_ssl_lossの方針を参考に、タスクタイプに応じた損失関数を自動選択
+    """
+
+    def __init__(self, ssl_tasks: List[str], task_weights: Optional[Dict[str, float]] = None):
+        """
+        Args:
+            ssl_tasks: SSLタスクのリスト
+            task_weights: 各タスクの重み（辞書形式）
+        """
+        super().__init__()
+        self.ssl_tasks = ssl_tasks
+        self.task_weights = task_weights or {task: 1.0 for task in ssl_tasks}
+
+        # タスクタイプに応じた損失関数
+        self.ce_criterion = nn.CrossEntropyLoss()
+        self.ntxent_criterion = NTXentLoss(temperature=0.5)
+
+    def _get_loss_fn(self, task: str):
+        """タスクタイプに応じた損失関数を返す（プレフィックスで判定）"""
+        if task.startswith("binary_"):
+            return self.ce_criterion  # CrossEntropy（2クラス分類）
+        elif task.startswith("contrastive_"):
+            return self.ntxent_criterion  # NT-Xent（対照学習）
+        else:
+            raise ValueError(
+                f"Unknown task type: {task}. Use prefix like 'binary_' or 'contrastive_'"
+            )
+
+    def forward(
+        self, predictions: Dict[str, torch.Tensor], labels: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        Args:
+            predictions: タスクごとの予測 {task_name: prediction}
+            labels: タスクごとのラベル {task_name: label}
+
+        Returns:
+            (total_loss, task_losses): 総損失と各タスクの損失
+        """
+        task_losses = {}
+        total_loss = 0.0
+
+        for task in self.ssl_tasks:
+            pred = predictions[task]
+            label = labels[task]
+
+            # タスクに応じた損失関数を取得
+            loss_fn = self._get_loss_fn(task)
+
+            # タスクタイプに応じて損失を計算
+            if task.startswith("binary_"):
+                # Binary分類: CrossEntropy
+                label = label.long()
+                loss = loss_fn(pred, label)
+            elif task.startswith("contrastive_"):
+                # 対照学習: NT-Xent
+                # labelsには2つのビューが格納されている想定
+                # pred は view1の埋め込み、label は view2の埋め込み
+                loss = loss_fn(pred, label)
+            else:
+                raise ValueError(f"Unknown task type: {task}")
+
+            task_losses[task] = loss
+
+            # 重み付き総損失に加算
+            total_loss += self.task_weights[task] * loss
+
+        return total_loss, task_losses
+
+
+# 後方互換性のためのエイリアス
+MultiTaskLoss = IntegratedSSLLoss
+
+
 def get_ssl_loss(method: str, **kwargs) -> nn.Module:
     """
     SSL手法名から損失関数を取得
@@ -211,15 +290,15 @@ def get_ssl_loss(method: str, **kwargs) -> nn.Module:
     """
     method = method.lower()
 
-    if method in ['simclr', 'moco']:
-        temperature = kwargs.get('temperature', 0.5)
+    if method in ["simclr", "moco"]:
+        temperature = kwargs.get("temperature", 0.5)
         return NTXentLoss(temperature=temperature)
 
-    elif method == 'simsiam':
+    elif method == "simsiam":
         return SimSiamLoss()
 
-    elif method == 'barlow_twins':
-        lambda_param = kwargs.get('lambda_param', 0.005)
+    elif method == "barlow_twins":
+        lambda_param = kwargs.get("lambda_param", 0.005)
         return BarlowTwinsLoss(lambda_param=lambda_param)
 
     else:

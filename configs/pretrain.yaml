@@ -1,100 +1,75 @@
-# Pre-training Configuration with Grid Search
-
-# Model Architecture
-model:
-  name: "resnet18"
-  backbone: "resnet18"
-  feature_dim: 128
-  projection_dim: 64
-
-# SSL Method (e.g., SimCLR, MoCo, BYOL, etc.)
-ssl:
-  method: "simclr"  # simclr, moco, byol, barlow_twins, etc.
-  temperature: 0.5
-  queue_size: 65536  # for MoCo
-  momentum: 0.999    # for MoCo/BYOL
-
-# Data Augmentation
-augmentation:
-  crop_size: 224
-  scale: [0.08, 1.0]
-  rotation: 15
-  jitter_strength: 1.0
-  blur_prob: 0.5
+# Pre-training Configuration
 
 # Dataset
-data:
-  train_path: "data/raw/pretrain"
-  batch_size: 256
-  num_workers: 4
-  pin_memory: true
+dataset_type: "sensor"
+
+sensor_data:
+  # 複数データセットのパスパターン（globパターン）
+  batch_loader:
+    dataset_patterns:
+      - "/mnt/home/GAE/har-dataset/npy_data_for_pretrain3/DSADS/*/*/data.npy"
+      - "/mnt/home/GAE/har-dataset/npy_data_for_pretrain3/MHEALTH/*/*/data.npy"
+      - "/mnt/home/GAE/har-dataset/npy_data_for_pretrain3/PAMAP2/*/*/data.npy"
+
+    exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
+    sample_threshold: 50  # 最小サンプル数（1ファイルあたり）
+    batch_size: 4  # 1バッチに含める被験者（ファイル）数
+    train_num_samples: 1000  # エポックあたりのサンプル数
+    val_num_samples: 100
+    test_num_samples: 100
+
+# Model
+model:
+  name: "resnet"
+  backbone: "resnet"
+  feature_dim: 256
+  projection_dim: 128
+
+# Multitask Learning
+multitask:
+  enabled: true
+  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp"]
+  task_weights: [1.0, 1.0, 1.0]
+  apply_prob: 0.5
 
 # Training
 training:
   epochs: 100
   learning_rate: 0.001
   weight_decay: 0.0001
-  optimizer: "adam"  # adam, sgd, adamw
-  scheduler: "cosine"  # cosine, step, plateau
+  optimizer: "adam"
+  scheduler: "cosine"
   warmup_epochs: 10
 
 # Hardware
-device: "cuda"  # cuda, cpu, mps
-multi_gpu: false
+device: "cuda"
 mixed_precision: true
 
 # Checkpointing
 checkpoint:
-  save_freq: 10  # save every N epochs
+  save_freq: 10
   save_path: "models/pretrained"
-  resume: null  # path to checkpoint to resume from
 
 # Logging
 logging:
-  log_interval: 10  # log every N batches
+  log_interval: 10
   log_dir: "logs/pretrain"
 
 # Weights & Biases
 wandb:
   enabled: true
   project: "har-foundation"
-  entity: null  # Your W&B username or team name
-  name: null  # Run name (auto-generated if null)
-  tags: ["pretrain", "ssl"]
-  notes: "Self-supervised pre-training"
+  tags: ["pretrain", "multitask"]
 
-# Seed for reproducibility
+# Seed
 seed: 42
 
-# ============================================================================
-# Grid Search Parameters
-# ============================================================================
-# Specify parameters to search over. Each parameter can have multiple values.
-# All combinations will be tested.
-# Use single value [x] for no grid search (normal training).
-
+# Grid Search
 grid_search:
-  # SSL Method parameters
-  # ssl:
-  #   temperature: [0.3, 0.5, 0.7]
-  #   method: ["simclr", "moco"]
-
-  # Model parameters
-  # model:
-  #   backbone: ["resnet18", "resnet50"]
-  #   feature_dim: [128, 256]
-
-  # Training parameters
   training:
-    learning_rate: [0.001]  # [0.0001, 0.001, 0.01] for grid search
-    # batch_size: [128, 256, 512]
-    # optimizer: ["adam", "sgd", "adamw"]
+    learning_rate: [0.001]
 
-# Experiment settings
 settings:
-  # Stop all experiments if one fails
   stop_on_error: false
-
-  # Save results summary
   save_summary: true
   summary_path: "logs/pretrain_experiments_summary.json"

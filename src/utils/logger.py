@@ -3,6 +3,7 @@
 
 ファイルとコンソールへのロギングを設定します。
 """
+
 import os
 import logging
 from datetime import datetime
@@ -12,10 +13,7 @@ from .constants import LOG_FORMAT, DATE_FORMAT
 
 
 def setup_logger(
-    name: str,
-    log_dir: str,
-    log_file: Optional[str] = None,
-    level: int = logging.INFO
+    name: str, log_dir: str, log_file: Optional[str] = None, level: int = logging.INFO
 ) -> logging.Logger:
     """
     ロガーを設定（ファイルとコンソールハンドラー付き）
@@ -47,13 +45,10 @@ def setup_logger(
         return logger
 
     # フォーマッターを作成
-    formatter = logging.Formatter(
-        LOG_FORMAT,
-        datefmt=DATE_FORMAT
-    )
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 
     # ファイルハンドラー
-    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
 

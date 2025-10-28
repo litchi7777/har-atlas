@@ -169,7 +169,7 @@ cat experiments/run_*/summary.json
 
 ```bash
 # テスト実行
-pytest tests/
+pytest __test__/
 
 # コードフォーマット
 black src/
@@ -183,10 +183,10 @@ flake8 src/
 
 ```bash
 # 特定のテストファイル
-pytest tests/test_model.py
+pytest __test__/test_models.py
 
 # 特定のテスト関数
-pytest tests/test_model.py::test_ssl_model_forward
+pytest __test__/test_models.py::test_ssl_model_forward
 ```
 
 ## Architecture

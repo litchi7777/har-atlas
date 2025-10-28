@@ -3,6 +3,7 @@
 
 1D CNNベースのHARモデルを提供します。
 """
+
 from typing import Optional, Tuple, List
 
 import numpy as np
@@ -22,7 +23,12 @@ class ResBlock(nn.Module):
     """
 
     def __init__(
-        self, in_channels: int, out_channels: int, kernel_size: int = 5, stride: int = 1, padding: int = 2
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 5,
+        stride: int = 1,
+        padding: int = 2,
     ):
         super(ResBlock, self).__init__()
 
@@ -112,9 +118,7 @@ class Downsample(nn.Module):
             kernel = torch.Tensor(kernel)
 
             # Register as buffer (not a learnable parameter)
-            self.register_buffer(
-                "kernel", kernel[None, None, :].repeat((channels, 1, 1))
-            )
+            self.register_buffer("kernel", kernel[None, None, :].repeat((channels, 1, 1)))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.stride == 1:
@@ -122,7 +126,7 @@ class Downsample(nn.Module):
 
         # Apply extra padding if needed (for odd total_padding)
         if self.extra_padding > 0:
-            x = F.pad(x, (self.extra_padding, 0), mode='constant', value=0)
+            x = F.pad(x, (self.extra_padding, 0), mode="constant", value=0)
 
         return F.conv1d(
             x,
@@ -147,11 +151,7 @@ class Resnet(nn.Module):
     Reference: https://github.com/anonymous/har-foundation
     """
 
-    def __init__(
-        self,
-        n_channels: int = 3,
-        foundationUK: bool = False
-    ):
+    def __init__(self, n_channels: int = 3, foundationUK: bool = False):
         super(Resnet, self).__init__()
 
         # Architecture definition. Each tuple defines
@@ -231,12 +231,8 @@ class Resnet(nn.Module):
         """
 
         # Check kernel sizes make sense (only odd numbers are supported)
-        assert (
-            conv_kernel_size % 2
-        ), "Only odd number for conv_kernel_size supported"
-        assert (
-            resblock_kernel_size % 2
-        ), "Only odd number for resblock_kernel_size supported"
+        assert conv_kernel_size % 2, "Only odd number for conv_kernel_size supported"
+        assert resblock_kernel_size % 2, "Only odd number for resblock_kernel_size supported"
 
         # Figure out correct paddings
         conv_padding = int((conv_kernel_size - 1) / 2)
@@ -297,7 +293,7 @@ class Conv1DBlock(nn.Module):
         kernel_size: int = 3,
         stride: int = 1,
         padding: int = 1,
-        dropout: float = 0.0
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, stride, padding)
@@ -328,7 +324,7 @@ class DeepConvLSTM(nn.Module):
         conv_channels: Tuple[int, ...] = (64, 128, 256),
         lstm_hidden: int = 128,
         lstm_layers: int = 2,
-        dropout: float = 0.5
+        dropout: float = 0.5,
     ):
         super().__init__()
 
@@ -347,7 +343,7 @@ class DeepConvLSTM(nn.Module):
             hidden_size=lstm_hidden,
             num_layers=lstm_layers,
             batch_first=True,
-            dropout=dropout if lstm_layers > 1 else 0
+            dropout=dropout if lstm_layers > 1 else 0,
         )
 
         # Classification head
@@ -394,7 +390,7 @@ class SimpleCNN(nn.Module):
         num_classes: int,
         base_channels: int = 64,
         num_blocks: int = 4,
-        dropout: float = 0.5
+        dropout: float = 0.5,
     ):
         super().__init__()
 
@@ -402,8 +398,10 @@ class SimpleCNN(nn.Module):
         blocks = []
         prev_channels = in_channels
         for i in range(num_blocks):
-            out_channels = base_channels * (2 ** i)
-            blocks.append(Conv1DBlock(prev_channels, out_channels, kernel_size=5, padding=2, dropout=dropout))
+            out_channels = base_channels * (2**i)
+            blocks.append(
+                Conv1DBlock(prev_channels, out_channels, kernel_size=5, padding=2, dropout=dropout)
+            )
             blocks.append(nn.MaxPool1d(kernel_size=2, stride=2))
             prev_channels = out_channels
 
@@ -463,7 +461,7 @@ class ResNet1D(nn.Module):
         num_classes: int,
         base_channels: int = 64,
         num_res_blocks: int = 3,
-        dropout: float = 0.5
+        dropout: float = 0.5,
     ):
         super().__init__()
 
@@ -478,8 +476,22 @@ class ResNet1D(nn.Module):
 
         # Downsample
         self.downsample = nn.Sequential(
-            Conv1DBlock(base_channels, base_channels * 2, kernel_size=3, stride=2, padding=1, dropout=dropout),
-            Conv1DBlock(base_channels * 2, base_channels * 4, kernel_size=3, stride=2, padding=1, dropout=dropout),
+            Conv1DBlock(
+                base_channels,
+                base_channels * 2,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                dropout=dropout,
+            ),
+            Conv1DBlock(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                dropout=dropout,
+            ),
         )
 
         # Global average pooling
@@ -517,7 +529,7 @@ class SensorSSLModel(nn.Module):
         in_channels: int,
         backbone: str = "simple_cnn",
         projection_dim: int = 128,
-        hidden_dim: int = 256
+        hidden_dim: int = 256,
     ):
         super().__init__()
 
@@ -535,20 +547,23 @@ class SensorSSLModel(nn.Module):
             self.encoder = DeepConvLSTM(in_channels, num_classes=hidden_dim, dropout=0.0)
             self.encoder.fc = nn.Identity()
             encoder_dim = self.encoder.lstm.hidden_size
+        elif backbone == "resnet":
+            self.encoder = Resnet(n_channels=in_channels, foundationUK=False)
+            encoder_dim = self.encoder.output_dim
         else:
             raise ValueError(f"Unknown backbone: {backbone}")
+
+        self.encoder_dim = encoder_dim
 
         # Projection head
         self.projection = nn.Sequential(
             nn.Linear(encoder_dim, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, projection_dim)
+            nn.Linear(hidden_dim, projection_dim),
         )
 
     def forward(
-        self,
-        x1: torch.Tensor,
-        x2: Optional[torch.Tensor] = None
+        self, x1: torch.Tensor, x2: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Args:
@@ -578,6 +593,80 @@ class SensorSSLModel(nn.Module):
         return z1, None
 
 
+class IntegratedSSLModel(nn.Module):
+    """
+    統合型SSLモデル - 複数のSSLタスクを1つのバックボーンで処理
+
+    Integrated_SSLModelの方針を参考に、よりクリーンに実装
+    各SSLタスクに対して専用のヘッドを持ち、タスク名で切り替え
+    """
+
+    def __init__(self, backbone: nn.Module, ssl_tasks: List[str], hidden_dim: int = 256):
+        """
+        Args:
+            backbone: 共有バックボーン（ResNet等）
+            ssl_tasks: SSLタスクのリスト (例: ["permute", "reverse", "timewarp"])
+            hidden_dim: 中間層の次元数
+        """
+        super().__init__()
+
+        self.backbone = backbone
+        self.input_dim = backbone.output_dim
+        self.ssl_tasks = ssl_tasks
+        self.hidden_dim = hidden_dim
+
+        # タスクごとのヘッドを作成
+        self.task_heads = nn.ModuleDict()
+        for task in ssl_tasks:
+            self.task_heads[task] = self._create_task_head(task)
+
+    def _create_task_head(self, task: str) -> nn.Module:
+        """タスクに応じたヘッドを作成（プレフィックスで判定）"""
+        if task.startswith("binary_"):
+            # Binary分類タスク（binary_permute, binary_reverse, binary_timewarp等）
+            return nn.Sequential(
+                nn.Linear(self.input_dim, self.hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(self.hidden_dim, 2),  # 2クラス分類
+            )
+        elif task.startswith("contrastive_"):
+            # 対照学習タスク（contrastive_simclr等）
+            return nn.Sequential(
+                nn.Linear(self.input_dim, self.hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(self.hidden_dim, 128),  # 128次元埋め込み
+            )
+        else:
+            raise ValueError(
+                f"Unknown task type: {task}. Use prefix like 'binary_' or 'contrastive_'"
+            )
+
+    def forward(self, x: torch.Tensor, task: str) -> torch.Tensor:
+        """
+        Args:
+            x: 入力 (batch_size, channels, time_steps)
+            task: 実行するタスク名
+
+        Returns:
+            output: タスク固有の出力
+        """
+        # バックボーンで特徴抽出
+        features = self.backbone(x)
+
+        # Global average pooling
+        if len(features.shape) > 2:
+            features = torch.mean(features, dim=-1)
+
+        # タスクヘッドを適用
+        output = self.task_heads[task](features)
+        return output
+
+
+# 後方互換性のためのエイリアス
+MultiTaskSSLModel = IntegratedSSLModel
+
+
 class SensorClassificationModel(nn.Module):
     """
     Fine-tuning用のセンサー分類モデル
@@ -592,7 +681,7 @@ class SensorClassificationModel(nn.Module):
         backbone: str = "simple_cnn",
         pretrained_path: Optional[str] = None,
         freeze_backbone: bool = False,
-        foundationUK: bool = False
+        foundationUK: bool = False,
     ):
         super().__init__()
 
@@ -629,19 +718,19 @@ class SensorClassificationModel(nn.Module):
 
     def _load_pretrained(self, path: str):
         """事前学習済みの重みをロード"""
-        checkpoint = torch.load(path, map_location='cpu')
+        checkpoint = torch.load(path, map_location="cpu")
 
         # SSL model の encoder の重みを抽出
-        if 'model_state_dict' in checkpoint:
-            state_dict = checkpoint['model_state_dict']
+        if "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
         else:
             state_dict = checkpoint
 
         # encoder.* の重みのみを抽出
         encoder_state = {}
         for key, value in state_dict.items():
-            if key.startswith('encoder.'):
-                new_key = key.replace('encoder.', '')
+            if key.startswith("encoder."):
+                new_key = key.replace("encoder.", "")
                 encoder_state[new_key] = value
 
         # Load into encoder
@@ -670,12 +759,7 @@ class SensorClassificationModel(nn.Module):
         return logits
 
 
-def get_sensor_model(
-    model_name: str,
-    in_channels: int,
-    num_classes: int,
-    **kwargs
-) -> nn.Module:
+def get_sensor_model(model_name: str, in_channels: int, num_classes: int, **kwargs) -> nn.Module:
     """
     センサーモデルのファクトリー関数
 
@@ -696,140 +780,21 @@ def get_sensor_model(
         return DeepConvLSTM(in_channels, num_classes, **kwargs)
     elif model_name == "resnet":
         # Resnetは独自のインターフェース
-        foundationUK = kwargs.get('foundationUK', False)
+        foundationUK = kwargs.get("foundationUK", False)
         model = Resnet(n_channels=in_channels, foundationUK=foundationUK)
         # 分類ヘッドを追加
         model.fc = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Linear(model.output_dim, num_classes)
+            nn.AdaptiveAvgPool1d(1), nn.Flatten(), nn.Linear(model.output_dim, num_classes)
         )
         # forward メソッドをオーバーライド
         original_forward = model.forward
+
         def forward_with_fc(x):
             x = original_forward(x)
             x = model.fc(x)
             return x
+
         model.forward = forward_with_fc
         return model
     else:
         raise ValueError(f"Unknown model: {model_name}")
-
-
-# ============================================================================
-# Tests
-# ============================================================================
-
-__test__ = {
-    "simple_cnn_forward": """
-    >>> import torch
-    >>> model = SimpleCNN(in_channels=9, num_classes=19)
-    >>> x = torch.randn(4, 9, 150)
-    >>> out = model(x)
-    >>> out.shape
-    torch.Size([4, 19])
-    """,
-
-    "resnet1d_forward": """
-    >>> import torch
-    >>> model = ResNet1D(in_channels=9, num_classes=19)
-    >>> x = torch.randn(4, 9, 150)
-    >>> out = model(x)
-    >>> out.shape
-    torch.Size([4, 19])
-    """,
-
-    "deepconvlstm_forward": """
-    >>> import torch
-    >>> model = DeepConvLSTM(in_channels=9, num_classes=19)
-    >>> x = torch.randn(4, 9, 150)
-    >>> out = model(x)
-    >>> out.shape
-    torch.Size([4, 19])
-    """,
-
-    "sensor_classification_model": """
-    >>> import torch
-    >>> model = SensorClassificationModel(in_channels=9, num_classes=19, backbone='simple_cnn')
-    >>> x = torch.randn(4, 9, 150)
-    >>> out = model(x)
-    >>> out.shape
-    torch.Size([4, 19])
-    """,
-
-    "sensor_ssl_model": """
-    >>> import torch
-    >>> model = SensorSSLModel(in_channels=9, backbone='simple_cnn', projection_dim=128)
-    >>> x1 = torch.randn(4, 9, 150)
-    >>> x2 = torch.randn(4, 9, 150)
-    >>> z1, z2 = model(x1, x2)
-    >>> z1.shape[0]
-    4
-    >>> z1.shape[1]
-    128
-    """,
-
-    "get_sensor_model_simple_cnn": """
-    >>> model = get_sensor_model('simple_cnn', in_channels=9, num_classes=19)
-    >>> isinstance(model, SimpleCNN)
-    True
-    """,
-
-    "get_sensor_model_invalid": """
-    >>> try:
-    ...     get_sensor_model('invalid_model', in_channels=9, num_classes=19)
-    ... except ValueError as e:
-    ...     'Unknown model' in str(e)
-    True
-    """,
-
-    "resnet_forward": """
-    >>> import torch
-    >>> model = Resnet(n_channels=9, foundationUK=False)
-    >>> x = torch.randn(4, 9, 150)
-    >>> out = model(x)
-    >>> out.shape[0]
-    4
-    >>> out.shape[1]
-    512
-    """,
-
-    "resnet_foundationUK": """
-    >>> import torch
-    >>> model = Resnet(n_channels=9, foundationUK=True)
-    >>> x = torch.randn(4, 9, 150)
-    >>> out = model(x)
-    >>> out.shape[1]
-    512
-    """,
-
-    "downsample_box_filter": """
-    >>> import torch
-    >>> # Test order=0 (box filter / average pooling)
-    >>> down = Downsample(channels=64, factor=2, order=0)
-    >>> x = torch.randn(4, 64, 100)
-    >>> out = down(x)
-    >>> out.shape
-    torch.Size([4, 64, 50])
-    """,
-
-    "downsample_triangle_filter": """
-    >>> import torch
-    >>> # Test order=1 (triangle filter)
-    >>> down = Downsample(channels=64, factor=2, order=1)
-    >>> x = torch.randn(4, 64, 100)
-    >>> out = down(x)
-    >>> out.shape
-    torch.Size([4, 64, 50])
-    """,
-
-    "downsample_identity": """
-    >>> import torch
-    >>> # Test factor=1 (identity, no downsampling)
-    >>> down = Downsample(channels=64, factor=1, order=0)
-    >>> x = torch.randn(4, 64, 100)
-    >>> out = down(x)
-    >>> torch.equal(x, out)
-    True
-    """,
-}

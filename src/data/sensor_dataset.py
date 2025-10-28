@@ -3,6 +3,7 @@
 
 Human Activity Recognition用のセンサーデータを扱います。
 """
+
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,8 +27,8 @@ class SensorDataset(Dataset):
         data_path: str,
         sensor_locations: List[str],
         user_ids: List[int],
-        mode: str = 'train',
-        transform: Optional[Any] = None
+        mode: str = "train",
+        transform: Optional[Any] = None,
     ):
         """
         Args:
@@ -113,8 +114,7 @@ class SensorDataset(Dataset):
         X = np.concatenate(X_list, axis=1)
 
         logger.info(
-            f"Loaded data from {len(self.sensor_locations)} sensors: "
-            f"{self.sensor_locations}"
+            f"Loaded data from {len(self.sensor_locations)} sensors: " f"{self.sensor_locations}"
         )
         logger.info(f"Data shape: {X.shape}")
 
@@ -138,7 +138,7 @@ class SensorDataset(Dataset):
         y = int(self.Y[idx])
 
         # データ拡張（学習時のみ）
-        if self.transform is not None and self.mode == 'train':
+        if self.transform is not None and self.mode == "train":
             x = self.transform(x)
             # データ拡張後にfloat32に再変換（augmentationがfloat64を返す場合があるため）
             x = x.astype(np.float32)
@@ -181,14 +181,14 @@ class PretrainSensorDataset(SensorDataset):
         data_path: str,
         sensor_locations: List[str],
         user_ids: List[int],
-        transform: Optional[Any] = None
+        transform: Optional[Any] = None,
     ):
         super().__init__(
             data_path=data_path,
             sensor_locations=sensor_locations,
             user_ids=user_ids,
-            mode='pretrain',
-            transform=transform
+            mode="pretrain",
+            transform=transform,
         )
 
     def __getitem__(self, idx: int) -> Tuple[List[torch.Tensor], int]:
@@ -216,7 +216,75 @@ class PretrainSensorDataset(SensorDataset):
         return [view1, view2], 0  # ダミーラベル
 
 
-def get_available_users(data_path: str, sensor_location: str = 'LeftArm') -> List[int]:
+class MultiTaskPretrainDataset(SensorDataset):
+    """
+    マルチタスク学習用のPre-trainingデータセット
+
+    3つの独立した2クラス分類タスク:
+    - タスク1: Permute適用 vs 非適用
+    - タスク2: Reverse適用 vs 非適用
+    - タスク3: TimeWarp適用 vs 非適用
+    """
+
+    def __init__(
+        self,
+        data_path: str,
+        sensor_locations: List[str],
+        user_ids: List[int],
+        specific_transforms: Optional[Dict[str, Any]] = None,
+        apply_prob: float = 0.5,
+    ):
+        """
+        Args:
+            data_path: データディレクトリのパス
+            sensor_locations: センサー部位のリスト
+            user_ids: 使用するユーザーIDのリスト
+            specific_transforms: 拡張辞書 {'permute': Transform, 'reverse': Transform, 'timewarp': Transform}
+            apply_prob: 各拡張を適用する確率
+        """
+        super().__init__(
+            data_path=data_path,
+            sensor_locations=sensor_locations,
+            user_ids=user_ids,
+            mode="pretrain",
+            transform=None,
+        )
+
+        self.specific_transforms = specific_transforms or {}
+        self.apply_prob = apply_prob
+        self.aug_names = ["permute", "reverse", "timewarp"]
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        マルチタスク用のデータを返す
+
+        Returns:
+            (x, labels):
+                - x: 拡張が適用されたデータ [channels, time_steps]
+                - labels: 3つの2値ラベル [permute_applied, reverse_applied, timewarp_applied]
+        """
+        # データを取得
+        x = self.X[idx].astype(np.float32)
+
+        # 各拡張をランダムに適用
+        labels = []
+        for aug_name in self.aug_names:
+            # ランダムに適用するか決定
+            apply = np.random.random() < self.apply_prob
+            labels.append(1 if apply else 0)
+
+            # 拡張を適用
+            if apply and aug_name in self.specific_transforms:
+                x = self.specific_transforms[aug_name](x).astype(np.float32)
+
+        # Tensorに変換
+        x_tensor = torch.from_numpy(x)
+        labels_tensor = torch.tensor(labels, dtype=torch.float32)
+
+        return x_tensor, labels_tensor
+
+
+def get_available_users(data_path: str, sensor_location: str = "LeftArm") -> List[int]:
     """
     利用可能なユーザーIDを取得
 

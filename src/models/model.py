@@ -3,6 +3,7 @@
 
 Self-Supervised Learning用のSSLモデルと、分類用のClassificationModelを提供します。
 """
+
 from pathlib import Path
 from typing import Optional
 
@@ -30,26 +31,24 @@ class SSLModel(nn.Module):
         """
         super().__init__()
 
-        backbone_name = config['backbone']
-        pretrained = config.get('pretrained', False)
+        backbone_name = config["backbone"]
+        pretrained = config.get("pretrained", False)
 
         # バックボーン（エンコーダー）
         self.encoder, encoder_dim = get_backbone(backbone_name, pretrained=pretrained)
 
         # プロジェクションヘッド
-        feature_dim = config.get('feature_dim', 128)
-        projection_dim = config.get('projection_dim', 64)
+        feature_dim = config.get("feature_dim", 128)
+        projection_dim = config.get("projection_dim", 64)
 
         self.projection = nn.Sequential(
             nn.Linear(encoder_dim, feature_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(feature_dim, projection_dim)
+            nn.Linear(feature_dim, projection_dim),
         )
 
     def forward(
-        self,
-        x1: torch.Tensor,
-        x2: Optional[torch.Tensor] = None
+        self, x1: torch.Tensor, x2: Optional[torch.Tensor] = None
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         順伝播
@@ -101,33 +100,31 @@ class ClassificationModel(nn.Module):
         """
         super().__init__()
 
-        backbone_name = config['backbone']
-        num_classes = config['num_classes']
-        pretrained = config.get('pretrained', False)
+        backbone_name = config["backbone"]
+        num_classes = config["num_classes"]
+        pretrained = config.get("pretrained", False)
 
         # バックボーン（エンコーダー）
         self.encoder, encoder_dim = get_backbone(backbone_name, pretrained=pretrained)
 
         # SSL事前学習済み重みをロード（指定されている場合）
-        pretrained_path = config.get('pretrained_path')
+        pretrained_path = config.get("pretrained_path")
         if pretrained_path:
             self.load_pretrained_encoder(pretrained_path)
 
         # バックボーンを凍結（指定されている場合）
-        if config.get('freeze_backbone', False):
+        if config.get("freeze_backbone", False):
             freeze_backbone(self.encoder)
 
         # ドロップアウト
-        dropout_rate = config.get('dropout', 0.0)
+        dropout_rate = config.get("dropout", 0.0)
         self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0 else None
 
         # 分類ヘッド
         self.fc = nn.Linear(encoder_dim, num_classes)
 
     def load_pretrained_encoder(
-        self,
-        pretrained_path: str,
-        device: Optional[torch.device] = None
+        self, pretrained_path: str, device: Optional[torch.device] = None
     ) -> None:
         """
         SSL事前学習済みのエンコーダー重みをロード
@@ -145,25 +142,23 @@ class ClassificationModel(nn.Module):
             raise FileNotFoundError(f"Pretrained model not found: {pretrained_path}")
 
         # チェックポイントをロード
-        checkpoint = torch.load(pretrained_path, map_location=device or 'cpu')
+        checkpoint = torch.load(pretrained_path, map_location=device or "cpu")
 
         # state_dictを取得
-        if 'model_state_dict' in checkpoint:
-            state_dict = checkpoint['model_state_dict']
+        if "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
         else:
             state_dict = checkpoint
 
         # encoder.* の重みのみを抽出
         encoder_state = {}
         for key, value in state_dict.items():
-            if key.startswith('encoder.'):
-                new_key = key.replace('encoder.', '')
+            if key.startswith("encoder."):
+                new_key = key.replace("encoder.", "")
                 encoder_state[new_key] = value
 
         # エンコーダーにロード
-        missing_keys, unexpected_keys = self.encoder.load_state_dict(
-            encoder_state, strict=False
-        )
+        missing_keys, unexpected_keys = self.encoder.load_state_dict(encoder_state, strict=False)
 
         if missing_keys:
             print(f"Warning: Missing keys in encoder: {missing_keys}")
@@ -197,77 +192,3 @@ class ClassificationModel(nn.Module):
         logits = self.fc(h)
 
         return logits
-
-
-# ============================================================================
-# Tests
-# ============================================================================
-
-__test__ = {
-    "ssl_model_creation": """
-    >>> import torch
-    >>> config = {
-    ...     'backbone': 'resnet18',
-    ...     'feature_dim': 128,
-    ...     'projection_dim': 64
-    ... }
-    >>> model = SSLModel(config)
-    >>> model is not None
-    True
-    """,
-
-    "ssl_model_forward": """
-    >>> import torch
-    >>> config = {
-    ...     'backbone': 'resnet18',
-    ...     'feature_dim': 128,
-    ...     'projection_dim': 64
-    ... }
-    >>> model = SSLModel(config)
-    >>> batch_size = 4
-    >>> x1 = torch.randn(batch_size, 3, 224, 224)
-    >>> x2 = torch.randn(batch_size, 3, 224, 224)
-    >>> z1, z2 = model(x1, x2)
-    >>> z1.shape
-    torch.Size([4, 64])
-    >>> z2.shape
-    torch.Size([4, 64])
-    """,
-
-    "classification_model_creation": """
-    >>> import torch
-    >>> config = {
-    ...     'backbone': 'resnet18',
-    ...     'num_classes': 10
-    ... }
-    >>> model = ClassificationModel(config)
-    >>> model is not None
-    True
-    """,
-
-    "classification_model_forward": """
-    >>> import torch
-    >>> config = {
-    ...     'backbone': 'resnet18',
-    ...     'num_classes': 10
-    ... }
-    >>> model = ClassificationModel(config)
-    >>> batch_size = 4
-    >>> x = torch.randn(batch_size, 3, 224, 224)
-    >>> logits = model(x)
-    >>> logits.shape
-    torch.Size([4, 10])
-    """,
-
-    "classification_model_with_dropout": """
-    >>> import torch
-    >>> config = {
-    ...     'backbone': 'resnet18',
-    ...     'num_classes': 10,
-    ...     'dropout': 0.5
-    ... }
-    >>> model = ClassificationModel(config)
-    >>> model.dropout is not None
-    True
-    """,
-}

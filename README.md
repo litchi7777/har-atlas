@@ -48,7 +48,7 @@ har-foundation/
 │       └── metrics.py       # 評価メトリクス
 ├── logs/                     # ログファイル
 ├── experiments/              # 実験結果
-├── tests/                    # テストコード
+├── __test__/                 # テストコード
 ├── requirements.txt          # 依存関係
 ├── .gitignore
 ├── .gitmodules              # サブモジュール設定
@@ -284,7 +284,7 @@ tensorboard --logdir logs/
 ### テスト実行
 
 ```bash
-pytest tests/
+pytest __test__/
 ```
 
 ### コードフォーマット

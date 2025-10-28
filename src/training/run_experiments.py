@@ -1,6 +1,7 @@
 """
 Run Multiple Experiments with Grid Search
 """
+
 import os
 import sys
 import argparse
@@ -19,13 +20,13 @@ sys.path.insert(0, str(project_root))
 
 def load_yaml(config_path):
     """Load YAML configuration file"""
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
 def save_yaml(config, save_path):
     """Save configuration to YAML file"""
-    with open(save_path, 'w') as f:
+    with open(save_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
 
@@ -65,7 +66,7 @@ def generate_grid_experiments(base_config, grid_params):
     experiments = []
 
     # Flatten grid parameters
-    def flatten_dict(d, parent_key=''):
+    def flatten_dict(d, parent_key=""):
         items = []
         for k, v in d.items():
             new_key = f"{parent_key}.{k}" if parent_key else k
@@ -91,7 +92,7 @@ def generate_grid_experiments(base_config, grid_params):
 
         for param_path, value in zip(param_names, combination):
             # Update config
-            keys = param_path.split('.')
+            keys = param_path.split(".")
             current = config
             for key in keys[:-1]:
                 if key not in current:
@@ -103,10 +104,7 @@ def generate_grid_experiments(base_config, grid_params):
             exp_name_parts.append(f"{keys[-1]}={value}")
 
         exp_name = "_".join(exp_name_parts)
-        experiments.append({
-            'name': exp_name,
-            'config': config
-        })
+        experiments.append({"name": exp_name, "config": config})
 
     return experiments
 
@@ -133,17 +131,17 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
     os.makedirs(exp_dir, exist_ok=True)
 
     # Update config paths
-    if 'checkpoint' in config:
-        config['checkpoint']['save_path'] = os.path.join(exp_dir, 'models')
-    if 'logging' in config:
-        config['logging']['log_dir'] = os.path.join(exp_dir, 'logs')
+    if "checkpoint" in config:
+        config["checkpoint"]["save_path"] = os.path.join(exp_dir, "models")
+    if "logging" in config:
+        config["logging"]["log_dir"] = os.path.join(exp_dir, "logs")
 
     # Update W&B run name if enabled
-    if 'wandb' in config and config['wandb'].get('enabled', False):
-        config['wandb']['name'] = exp_name
+    if "wandb" in config and config["wandb"].get("enabled", False):
+        config["wandb"]["name"] = exp_name
 
     # Save experiment config
-    config_path = os.path.join(exp_dir, 'config.yaml')
+    config_path = os.path.join(exp_dir, "config.yaml")
     save_yaml(config, config_path)
 
     # Run training script
@@ -153,10 +151,10 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
 
     try:
         result = subprocess.run(
-            [sys.executable, script_path, '--config', config_path],
+            [sys.executable, script_path, "--config", config_path],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
 
         end_time = datetime.now()
@@ -180,13 +178,13 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
         print(f"Duration: {duration:.2f} seconds")
 
     return {
-        'name': exp_name,
-        'status': status,
-        'duration': duration,
-        'start_time': start_time.isoformat(),
-        'end_time': end_time.isoformat(),
-        'config_path': config_path,
-        'error': error
+        "name": exp_name,
+        "status": status,
+        "duration": duration,
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "config_path": config_path,
+        "error": error,
     }
 
 
@@ -195,12 +193,12 @@ def main(args):
     full_config = load_yaml(args.config)
 
     # Extract grid_search section
-    if 'grid_search' not in full_config:
+    if "grid_search" not in full_config:
         print("Error: 'grid_search' section not found in config")
         return
 
-    grid_search = full_config.pop('grid_search')
-    settings = full_config.pop('settings', {})
+    grid_search = full_config.pop("grid_search")
+    settings = full_config.pop("settings", {})
 
     # Base config is everything except grid_search and settings
     base_config = full_config
@@ -214,56 +212,46 @@ def main(args):
 
     # Create experiments directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = os.path.join('experiments', f'run_{timestamp}')
+    experiment_dir = os.path.join("experiments", f"run_{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
 
     # Save experiment plan (include grid_search and settings back)
-    plan = {
-        'base_config': base_config,
-        'grid_search': grid_search,
-        'settings': settings
-    }
-    plan_path = os.path.join(experiment_dir, 'experiment_plan.yaml')
+    plan = {"base_config": base_config, "grid_search": grid_search, "settings": settings}
+    plan_path = os.path.join(experiment_dir, "experiment_plan.yaml")
     save_yaml(plan, plan_path)
     print(f"Experiment plan saved to: {plan_path}\n")
 
     # Run experiments
     results = []
-    stop_on_error = settings.get('stop_on_error', False)
+    stop_on_error = settings.get("stop_on_error", False)
 
     for i, exp in enumerate(experiments, 1):
         print(f"\nExperiment {i}/{len(experiments)}")
 
-        result = run_experiment(
-            exp['name'],
-            exp['config'],
-            args.script,
-            experiment_dir
-        )
+        result = run_experiment(exp["name"], exp["config"], args.script, experiment_dir)
         results.append(result)
 
         # Stop if experiment failed and stop_on_error is True
-        if result['status'] == 'failed' and stop_on_error:
+        if result["status"] == "failed" and stop_on_error:
             print(f"\nStopping experiments due to failure (stop_on_error=True)")
             break
 
     # Save results summary
     summary = {
-        'timestamp': timestamp,
-        'total_experiments': len(experiments),
-        'completed_experiments': len(results),
-        'successful': sum(1 for r in results if r['status'] == 'success'),
-        'failed': sum(1 for r in results if r['status'] == 'failed'),
-        'total_duration': sum(r['duration'] for r in results),
-        'results': results
+        "timestamp": timestamp,
+        "total_experiments": len(experiments),
+        "completed_experiments": len(results),
+        "successful": sum(1 for r in results if r["status"] == "success"),
+        "failed": sum(1 for r in results if r["status"] == "failed"),
+        "total_duration": sum(r["duration"] for r in results),
+        "results": results,
     }
 
-    if settings.get('save_summary', True):
-        summary_path = settings.get('summary_path',
-                                    os.path.join(experiment_dir, 'summary.json'))
+    if settings.get("save_summary", True):
+        summary_path = settings.get("summary_path", os.path.join(experiment_dir, "summary.json"))
         os.makedirs(os.path.dirname(summary_path), exist_ok=True)
 
-        with open(summary_path, 'w') as f:
+        with open(summary_path, "w") as f:
             json.dump(summary, f, indent=2)
 
         print(f"\n{'='*80}")
@@ -278,14 +266,22 @@ def main(args):
         print(f"{'='*80}\n")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Run grid search experiments')
-    parser.add_argument('--config', type=str, required=True,
-                       help='Path to experiment configuration file '
-                            '(e.g., configs/pretrain.yaml or configs/finetune.yaml)')
-    parser.add_argument('--script', type=str, required=True,
-                       help='Path to training script '
-                            '(e.g., src/training/pretrain.py or src/training/finetune.py)')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run grid search experiments")
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to experiment configuration file "
+        "(e.g., configs/pretrain.yaml or configs/finetune.yaml)",
+    )
+    parser.add_argument(
+        "--script",
+        type=str,
+        required=True,
+        help="Path to training script "
+        "(e.g., src/training/pretrain.py or src/training/finetune.py)",
+    )
 
     args = parser.parse_args()
     main(args)

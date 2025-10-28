@@ -3,6 +3,7 @@
 
 分類タスクの評価指標を計算します。
 """
+
 from typing import Dict, List, Optional, Union
 
 import numpy as np
@@ -12,14 +13,14 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     confusion_matrix,
-    classification_report
+    classification_report,
 )
 
 
 def calculate_metrics(
     y_true: Union[List[int], np.ndarray],
     y_pred: Union[List[int], np.ndarray],
-    average: str = 'macro'
+    average: str = "macro",
 ) -> Dict[str, float]:
     """
     分類メトリクスを計算
@@ -33,18 +34,17 @@ def calculate_metrics(
         メトリクス辞書
     """
     metrics = {
-        'accuracy': float(accuracy_score(y_true, y_pred)),
-        'precision': float(precision_score(y_true, y_pred, average=average, zero_division=0)),
-        'recall': float(recall_score(y_true, y_pred, average=average, zero_division=0)),
-        'f1': float(f1_score(y_true, y_pred, average=average, zero_division=0)),
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision": float(precision_score(y_true, y_pred, average=average, zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred, average=average, zero_division=0)),
+        "f1": float(f1_score(y_true, y_pred, average=average, zero_division=0)),
     }
 
     return metrics
 
 
 def get_confusion_matrix(
-    y_true: Union[List[int], np.ndarray],
-    y_pred: Union[List[int], np.ndarray]
+    y_true: Union[List[int], np.ndarray], y_pred: Union[List[int], np.ndarray]
 ) -> np.ndarray:
     """
     混同行列を計算
@@ -62,7 +62,7 @@ def get_confusion_matrix(
 def get_classification_report(
     y_true: Union[List[int], np.ndarray],
     y_pred: Union[List[int], np.ndarray],
-    target_names: Optional[List[str]] = None
+    target_names: Optional[List[str]] = None,
 ) -> str:
     """
     詳細な分類レポートを取得

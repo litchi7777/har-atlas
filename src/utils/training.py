@@ -3,6 +3,7 @@
 
 オプティマイザー、スケジューラー、ロギングの設定等
 """
+
 import logging
 from typing import Any, Dict, Optional
 
@@ -12,6 +13,7 @@ import torch.optim as optim
 
 try:
     import wandb
+
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
@@ -21,11 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_optimizer(
-    model: nn.Module,
-    optimizer_name: str,
-    learning_rate: float,
-    weight_decay: float = 0.0,
-    **kwargs
+    model: nn.Module, optimizer_name: str, learning_rate: float, weight_decay: float = 0.0, **kwargs
 ) -> torch.optim.Optimizer:
     """
     オプティマイザーを作成
@@ -45,42 +43,39 @@ def get_optimizer(
     """
     optimizer_name = optimizer_name.lower()
 
-    if optimizer_name == 'adam':
+    if optimizer_name == "adam":
         return optim.Adam(
             model.parameters(),
             lr=learning_rate,
             weight_decay=weight_decay,
-            betas=kwargs.get('betas', (0.9, 0.999))
+            betas=kwargs.get("betas", (0.9, 0.999)),
         )
 
-    elif optimizer_name == 'sgd':
+    elif optimizer_name == "sgd":
         return optim.SGD(
             model.parameters(),
             lr=learning_rate,
-            momentum=kwargs.get('momentum', 0.9),
+            momentum=kwargs.get("momentum", 0.9),
             weight_decay=weight_decay,
-            nesterov=kwargs.get('nesterov', False)
+            nesterov=kwargs.get("nesterov", False),
         )
 
-    elif optimizer_name == 'adamw':
+    elif optimizer_name == "adamw":
         return optim.AdamW(
             model.parameters(),
             lr=learning_rate,
             weight_decay=weight_decay,
-            betas=kwargs.get('betas', (0.9, 0.999))
+            betas=kwargs.get("betas", (0.9, 0.999)),
         )
 
     else:
         raise ValueError(
-            f"Unsupported optimizer: {optimizer_name}. "
-            f"Supported: adam, sgd, adamw"
+            f"Unsupported optimizer: {optimizer_name}. " f"Supported: adam, sgd, adamw"
         )
 
 
 def get_scheduler(
-    optimizer: torch.optim.Optimizer,
-    scheduler_name: str,
-    **kwargs
+    optimizer: torch.optim.Optimizer, scheduler_name: str, **kwargs
 ) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
     """
     学習率スケジューラーを作成
@@ -96,38 +91,31 @@ def get_scheduler(
     Raises:
         ValueError: サポートされていないスケジューラーの場合
     """
-    if scheduler_name is None or scheduler_name.lower() == 'none':
+    if scheduler_name is None or scheduler_name.lower() == "none":
         return None
 
     scheduler_name = scheduler_name.lower()
 
-    if scheduler_name == 'step':
+    if scheduler_name == "step":
         return optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=kwargs.get('step_size', 30),
-            gamma=kwargs.get('gamma', 0.1)
+            optimizer, step_size=kwargs.get("step_size", 30), gamma=kwargs.get("gamma", 0.1)
         )
 
-    elif scheduler_name == 'cosine':
+    elif scheduler_name == "cosine":
         return optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=kwargs.get('T_max', 100),
-            eta_min=kwargs.get('eta_min', 0)
+            optimizer, T_max=kwargs.get("T_max", 100), eta_min=kwargs.get("eta_min", 0)
         )
 
-    elif scheduler_name == 'plateau':
+    elif scheduler_name == "plateau":
         return optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
-            mode=kwargs.get('mode', 'min'),
-            factor=kwargs.get('factor', 0.1),
-            patience=kwargs.get('patience', 10)
+            mode=kwargs.get("mode", "min"),
+            factor=kwargs.get("factor", 0.1),
+            patience=kwargs.get("patience", 10),
         )
 
-    elif scheduler_name == 'exponential':
-        return optim.lr_scheduler.ExponentialLR(
-            optimizer,
-            gamma=kwargs.get('gamma', 0.95)
-        )
+    elif scheduler_name == "exponential":
+        return optim.lr_scheduler.ExponentialLR(optimizer, gamma=kwargs.get("gamma", 0.95))
 
     else:
         raise ValueError(
@@ -147,9 +135,9 @@ def init_wandb(config: Dict[str, Any], model: nn.Module) -> bool:
     Returns:
         W&Bが有効化されたかどうか
     """
-    wandb_config = config.get('wandb', {})
+    wandb_config = config.get("wandb", {})
 
-    if not wandb_config.get('enabled', False):
+    if not wandb_config.get("enabled", False):
         return False
 
     if not WANDB_AVAILABLE:
@@ -161,16 +149,16 @@ def init_wandb(config: Dict[str, Any], model: nn.Module) -> bool:
 
     try:
         wandb.init(
-            project=wandb_config.get('project', 'har-foundation'),
-            entity=wandb_config.get('entity'),
-            name=wandb_config.get('name'),
-            tags=wandb_config.get('tags', []),
-            notes=wandb_config.get('notes'),
-            config=config
+            project=wandb_config.get("project", "har-foundation"),
+            entity=wandb_config.get("entity"),
+            name=wandb_config.get("name"),
+            tags=wandb_config.get("tags", []),
+            notes=wandb_config.get("notes"),
+            config=config,
         )
 
         # モデルを監視
-        wandb.watch(model, log='all', log_freq=100)
+        wandb.watch(model, log="all", log_freq=100)
 
         logger.info("Weights & Biases initialized successfully")
         return True
@@ -187,7 +175,7 @@ class AverageMeter:
     学習中の損失やメトリクスを効率的に追跡します。
     """
 
-    def __init__(self, name: str = ''):
+    def __init__(self, name: str = ""):
         """
         Args:
             name: メーター名
@@ -226,12 +214,7 @@ class EarlyStopping:
     検証損失が改善しない場合にトレーニングを停止します。
     """
 
-    def __init__(
-        self,
-        patience: int = 10,
-        min_delta: float = 0.0,
-        mode: str = 'min'
-    ):
+    def __init__(self, patience: int = 10, min_delta: float = 0.0, mode: str = "min"):
         """
         Args:
             patience: 改善がない場合の許容エポック数
@@ -260,7 +243,7 @@ class EarlyStopping:
             return False
 
         # スコアが改善したか判定
-        if self.mode == 'min':
+        if self.mode == "min":
             improved = score < (self.best_score - self.min_delta)
         else:  # mode == 'max'
             improved = score > (self.best_score + self.min_delta)

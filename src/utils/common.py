@@ -3,6 +3,7 @@
 
 プロジェクト全体で使用される共通機能を提供します。
 """
+
 import os
 import random
 from pathlib import Path
@@ -31,7 +32,7 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def get_device(device_name: str = 'cuda') -> torch.device:
+def get_device(device_name: str = "cuda") -> torch.device:
     """
     デバイスを取得（CUDA、MPS、CPUの自動判定）
 
@@ -41,12 +42,12 @@ def get_device(device_name: str = 'cuda') -> torch.device:
     Returns:
         利用可能なデバイス
     """
-    if device_name == 'cuda' and torch.cuda.is_available():
-        return torch.device('cuda')
-    elif device_name == 'mps' and torch.backends.mps.is_available():
-        return torch.device('mps')
+    if device_name == "cuda" and torch.cuda.is_available():
+        return torch.device("cuda")
+    elif device_name == "mps" and torch.backends.mps.is_available():
+        return torch.device("mps")
     else:
-        return torch.device('cpu')
+        return torch.device("cpu")
 
 
 def count_parameters(model: nn.Module) -> Dict[str, int]:
@@ -64,9 +65,9 @@ def count_parameters(model: nn.Module) -> Dict[str, int]:
     non_trainable_params = total_params - trainable_params
 
     return {
-        'total': total_params,
-        'trainable': trainable_params,
-        'non_trainable': non_trainable_params
+        "total": total_params,
+        "trainable": trainable_params,
+        "non_trainable": non_trainable_params,
     }
 
 
@@ -77,7 +78,7 @@ def save_checkpoint(
     metrics: Dict[str, Any],
     save_path: str,
     filename: Optional[str] = None,
-    is_best: bool = False
+    is_best: bool = False,
 ) -> str:
     """
     モデルチェックポイントを保存
@@ -97,22 +98,22 @@ def save_checkpoint(
     os.makedirs(save_path, exist_ok=True)
 
     checkpoint = {
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'metrics': metrics,
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "metrics": metrics,
     }
 
     # ファイル名を決定
     if filename is None:
-        filename = f'checkpoint_epoch_{epoch}.pth'
+        filename = f"checkpoint_epoch_{epoch}.pth"
 
     save_file = os.path.join(save_path, filename)
     torch.save(checkpoint, save_file)
 
     # ベストモデルの場合は別途保存
     if is_best:
-        best_file = os.path.join(save_path, 'best_model.pth')
+        best_file = os.path.join(save_path, "best_model.pth")
         torch.save(checkpoint, best_file)
 
     return save_file
@@ -123,7 +124,7 @@ def load_checkpoint(
     model: nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
     device: Optional[torch.device] = None,
-    strict: bool = True
+    strict: bool = True,
 ) -> Dict[str, Any]:
     """
     チェックポイントからモデルを読み込み
@@ -144,15 +145,15 @@ def load_checkpoint(
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
     # モデルの重みをロード
-    model.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+    model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
 
     # オプティマイザーの状態をロード（指定されている場合）
-    if optimizer is not None and 'optimizer_state_dict' in checkpoint:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if optimizer is not None and "optimizer_state_dict" in checkpoint:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
     return {
-        'epoch': checkpoint.get('epoch', 0),
-        'metrics': checkpoint.get('metrics', {}),
+        "epoch": checkpoint.get("epoch", 0),
+        "metrics": checkpoint.get("metrics", {}),
     }
 
 
@@ -204,5 +205,5 @@ def get_lr(optimizer: torch.optim.Optimizer) -> float:
         現在の学習率
     """
     for param_group in optimizer.param_groups:
-        return param_group['lr']
+        return param_group["lr"]
     return 0.0

@@ -1,46 +1,27 @@
-# Fine-tuning Configuration with Grid Search
+# Fine-tuning Configuration
 
-# Dataset Type
-dataset_type: "sensor"  # "image" or "sensor"
+# Dataset
+dataset_type: "sensor"
 
-# Sensor Dataset Settings (dataset_type="sensor" の場合のみ使用)
 sensor_data:
-  dataset_name: "DSADS"  # データセット名
+  dataset_name: "DSADS"
   data_root: "/mnt/home/processed_data/All_30Hz_W150/npy_data2/DSADS"
-  mode: "multi_device"  # "single_device" or "multi_device"
-
-  # ユーザー分割
+  mode: "multi_device"
   train_users: [1, 2, 3, 4, 5, 6]
   val_users: [7]
   test_users: [8]
 
-# Model Architecture
+# Model
 model:
-  name: "simple_cnn"  # For sensor: "simple_cnn", "resnet1d", "deepconvlstm" | For image: "resnet18", "resnet50"
+  name: "simple_cnn"
   backbone: "simple_cnn"
-  num_classes: 19  # DSADSは19クラス
-  pretrained_path: null  # Path to pre-trained model
-  freeze_backbone: false  # Whether to freeze backbone during fine-tuning
-
-# Dataset (dataset_type="image" の場合のみ使用)
-data:
-  train_path: "data/processed/train"
-  val_path: "data/processed/val"
-  test_path: "data/processed/test"
-  batch_size: 64
-  num_workers: 4
-  pin_memory: true
+  num_classes: 19
+  pretrained_path: null
+  freeze_backbone: false
 
 # Data Augmentation
 augmentation:
-  # For sensor data: "light", "medium", "heavy"
   mode: "light"
-
-  # For image data (dataset_type="image" の場合のみ使用)
-  crop_size: 224
-  horizontal_flip: true
-  rotation: 10
-  color_jitter: false
 
 # Training
 training:
@@ -96,35 +77,12 @@ early_stopping:
 # Seed for reproducibility
 seed: 42
 
-# ============================================================================
-# Grid Search Parameters
-# ============================================================================
-# Specify parameters to search over. Each parameter can have multiple values.
-# All combinations will be tested.
-# Use single value [x] for no grid search (normal training).
-
+# Grid Search
 grid_search:
-  # Model parameters
-  # model:
-  #   backbone: ["resnet18", "resnet50"]
-  #   freeze_backbone: [false, true]
-
-  # Training parameters
   training:
-    learning_rate: [0.0001]  # [0.00001, 0.0001, 0.001] for grid search
-    # batch_size: [32, 64, 128]
-    # optimizer: ["adam", "sgd", "adamw"]
-    # weight_decay: [0.0, 0.0001, 0.001]
+    learning_rate: [0.0001]
 
-  # Loss parameters
-  # loss:
-  #   label_smoothing: [0.0, 0.1, 0.2]
-
-# Experiment settings
 settings:
-  # Stop all experiments if one fails
   stop_on_error: false
-
-  # Save results summary
   save_summary: true
   summary_path: "logs/finetune_experiments_summary.json"

@@ -5,39 +5,43 @@ Supervised Fine-tuning スクリプト
 """
 
 import argparse
+import shutil
 import sys
-from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import numpy as np
-import shutil
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-from src.models.model import ClassificationModel
-from src.models.sensor_models import SensorClassificationModel
-from src.data.dataset import FinetuneDataset
-from src.data.sensor_dataset import SensorDataset
-from src.data.augmentations import get_augmentation_pipeline
-
-# Import from har-unified-dataset submodule
-import sys
-
+# har-unified-datasetサブモジュールをパスに追加
 har_dataset_path = project_root / "har-unified-dataset"
 sys.path.insert(0, str(har_dataset_path))
+
+from src.data.augmentations import get_augmentation_pipeline
+from src.data.dataset import FinetuneDataset
+from src.data.sensor_dataset import SensorDataset
 from src.dataset_info import get_dataset_info, select_sensors
+from src.models.model import ClassificationModel
+from src.models.sensor_models import SensorClassificationModel
+from src.utils.common import count_parameters, get_device, set_seed
 from src.utils.config import load_config, validate_config
-from src.utils.common import set_seed, get_device, save_checkpoint, count_parameters
 from src.utils.logger import setup_logger
 from src.utils.metrics import calculate_metrics
-from src.utils.training import get_optimizer, get_scheduler, init_wandb, AverageMeter, EarlyStopping
+from src.utils.training import (
+    AverageMeter,
+    EarlyStopping,
+    get_optimizer,
+    get_scheduler,
+    init_wandb,
+)
 
 try:
     import wandb
@@ -45,6 +49,52 @@ try:
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
+
+# 定数
+LOG_INTERVAL = 10
+DEFAULT_BATCH_SIZE = 64
+DEFAULT_NUM_WORKERS = 4
+DEFAULT_EVAL_INTERVAL = 1
+DEFAULT_EARLY_STOPPING_PATIENCE = 10
+DEFAULT_EARLY_STOPPING_MIN_DELTA = 0.001
+
+
+@dataclass
+class ExperimentDirs:
+    """実験ディレクトリ構造を保持するデータクラス"""
+
+    root: Path
+    log: Path
+
+    @classmethod
+    def create(cls, base_dir: Path, run_id: str) -> "ExperimentDirs":
+        """実験ディレクトリを作成"""
+        root = base_dir / "finetune" / f"run_{run_id}"
+        log = root / "logs"
+
+        root.mkdir(parents=True, exist_ok=True)
+        log.mkdir(exist_ok=True)
+
+        return cls(root=root, log=log)
+
+
+@dataclass
+class DataLoaderParams:
+    """DataLoader共通パラメータを保持するデータクラス"""
+
+    batch_size: int
+    num_workers: int
+    pin_memory: bool
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "DataLoaderParams":
+        """設定から DataLoader パラメータを作成"""
+        data_config = config.get("data", {})
+        return cls(
+            batch_size=data_config.get("batch_size", DEFAULT_BATCH_SIZE),
+            num_workers=data_config.get("num_workers", DEFAULT_NUM_WORKERS),
+            pin_memory=data_config.get("pin_memory", True),
+        )
 
 
 def train_epoch(
@@ -56,8 +106,7 @@ def train_epoch(
     epoch: int,
     use_wandb: bool = False,
 ) -> Tuple[float, float]:
-    """
-    1エポック分の学習を実行
+    """1エポック分の学習を実行
 
     Args:
         model: 学習するモデル
@@ -102,7 +151,7 @@ def train_epoch(
         pbar.set_postfix({"loss": f"{loss_meter.avg:.4f}", "acc": f"{acc:.2f}%"})
 
         # W&Bにログ
-        if use_wandb and batch_idx % 10 == 0:
+        if use_wandb and batch_idx % LOG_INTERVAL == 0:
             wandb.log(
                 {
                     "train/batch_loss": loss.item(),
@@ -118,8 +167,7 @@ def train_epoch(
 def evaluate(
     model: nn.Module, dataloader: DataLoader, criterion: nn.Module, device: torch.device
 ) -> Dict[str, float]:
-    """
-    モデルを評価
+    """モデルを評価
 
     Args:
         model: 評価するモデル
@@ -155,136 +203,159 @@ def evaluate(
     return metrics
 
 
-def main(args: argparse.Namespace) -> None:
-    """
-    メイン関数
+def create_sensor_datasets(
+    config: Dict[str, Any], logger
+) -> Tuple[SensorDataset, SensorDataset, int, int, int]:
+    """センサーデータセットを作成
 
     Args:
-        args: コマンドライン引数
+        config: 設定辞書
+        logger: ロガー
+
+    Returns:
+        (train_dataset, val_dataset, num_classes, in_channels, sequence_length)
     """
-    # 設定をロード
-    config = load_config(args.config)
-    validate_config(config, mode="finetune")
+    sensor_config = config["sensor_data"]
+    dataset_name = sensor_config["dataset_name"]
+    data_root = sensor_config["data_root"]
+    mode = sensor_config["mode"]
 
-    # 実験ディレクトリを作成
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = Path("experiments") / "finetune" / f"run_{run_id}"
-    experiment_dir.mkdir(parents=True, exist_ok=True)
+    # データセット情報を取得
+    dataset_info = get_dataset_info(dataset_name, data_root)
+    num_classes = dataset_info["n_classes"]
 
-    # ログディレクトリ
-    log_dir = experiment_dir / "logs"
-    log_dir.mkdir(exist_ok=True)
+    # センサーを選択
+    sensors = select_sensors(
+        dataset_name, data_root, mode, sensor_config.get("specific_sensors")
+    )
 
-    # 設定ファイルを実験ディレクトリにコピー
-    shutil.copy(args.config, experiment_dir / "config.yaml")
+    logger.info(f"Dataset: {dataset_name}")
+    logger.info(f"Mode: {mode}")
+    logger.info(f"Sensors: {sensors}")
+    logger.info(f"Classes: {num_classes}")
 
-    # ロガーをセットアップ（実験ディレクトリ内に）
-    logger = setup_logger("finetune", str(log_dir))
-    logger.info(f"Experiment directory: {experiment_dir}")
-    logger.info(f"Configuration loaded from {args.config}")
-    logger.info(f"Starting fine-tuning with config: {config['model']['name']}")
+    # データ拡張
+    train_transform = get_augmentation_pipeline(
+        config.get("augmentation", {}).get("mode", "light")
+    )
 
-    # シード設定
-    set_seed(config["seed"])
-    logger.info(f"Random seed set to {config['seed']}")
+    # データセット作成
+    train_dataset = SensorDataset(
+        data_path=data_root,
+        sensor_locations=sensors,
+        user_ids=sensor_config["train_users"],
+        mode="train",
+        transform=train_transform,
+    )
 
-    # デバイス設定
-    device = get_device(config["device"])
-    logger.info(f"Using device: {device}")
+    val_dataset = SensorDataset(
+        data_path=data_root,
+        sensor_locations=sensors,
+        user_ids=sensor_config["val_users"],
+        mode="val",
+        transform=None,
+    )
 
-    # データセットとデータローダーを作成
-    dataset_type = config.get("dataset_type", "image")
+    # 入力チャンネル数を取得
+    in_channels = train_dataset.get_num_channels()
+    sequence_length = train_dataset.get_sequence_length()
 
-    try:
-        if dataset_type == "sensor":
-            # センサーデータの場合
-            sensor_config = config["sensor_data"]
-            dataset_name = sensor_config["dataset_name"]
-            data_root = sensor_config["data_root"]
-            mode = sensor_config["mode"]
+    logger.info(f"Input shape: ({in_channels}, {sequence_length})")
 
-            # データセット情報を取得
-            dataset_info = get_dataset_info(dataset_name, data_root)
-            num_classes = dataset_info["n_classes"]
+    return train_dataset, val_dataset, num_classes, in_channels, sequence_length
 
-            # センサーを選択
-            sensors = select_sensors(
-                dataset_name, data_root, mode, sensor_config.get("specific_sensors")
-            )
 
-            logger.info(f"Dataset: {dataset_name}")
-            logger.info(f"Mode: {mode}")
-            logger.info(f"Sensors: {sensors}")
-            logger.info(f"Classes: {num_classes}")
+def create_image_datasets(
+    config: Dict[str, Any], logger
+) -> Tuple[FinetuneDataset, FinetuneDataset, int]:
+    """画像データセットを作成
 
-            # データ拡張
-            train_transform = get_augmentation_pipeline(
-                config.get("augmentation", {}).get("mode", "light")
-            )
+    Args:
+        config: 設定辞書
+        logger: ロガー
 
-            # データセット作成
-            train_dataset = SensorDataset(
-                data_path=data_root,
-                sensor_locations=sensors,
-                user_ids=sensor_config["train_users"],
-                mode="train",
-                transform=train_transform,
-            )
+    Returns:
+        (train_dataset, val_dataset, num_classes)
+    """
+    train_dataset = FinetuneDataset(
+        data_path=config["data"]["train_path"],
+        augmentation_config=config.get("augmentation"),
+    )
 
-            val_dataset = SensorDataset(
-                data_path=data_root,
-                sensor_locations=sensors,
-                user_ids=sensor_config["val_users"],
-                mode="val",
-                transform=None,
-            )
+    val_dataset = FinetuneDataset(
+        data_path=config["data"]["val_path"],
+        augmentation_config=None,  # 検証時は拡張なし
+    )
 
-            # 入力チャンネル数を取得
-            in_channels = train_dataset.get_num_channels()
-            sequence_length = train_dataset.get_sequence_length()
+    num_classes = len(train_dataset.class_to_idx)
 
-            logger.info(f"Input shape: ({in_channels}, {sequence_length})")
+    return train_dataset, val_dataset, num_classes
 
-        else:
-            # 画像データの場合
-            train_dataset = FinetuneDataset(
-                data_path=config["data"]["train_path"],
-                augmentation_config=config.get("augmentation"),
-            )
 
-            val_dataset = FinetuneDataset(
-                data_path=config["data"]["val_path"], augmentation_config=None  # 検証時は拡張なし
-            )
+def create_data_loaders(
+    train_dataset,
+    val_dataset,
+    loader_params: DataLoaderParams,
+    logger,
+) -> Tuple[DataLoader, DataLoader]:
+    """データローダーを作成
 
-            num_classes = len(train_dataset.class_to_idx)
+    Args:
+        train_dataset: トレーニングデータセット
+        val_dataset: 検証データセット
+        loader_params: DataLoaderパラメータ
+        logger: ロガー
 
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=config.get("data", {}).get("batch_size", 64),
-            shuffle=True,
-            num_workers=config.get("data", {}).get("num_workers", 4),
-            pin_memory=config.get("data", {}).get("pin_memory", True),
-        )
+    Returns:
+        (train_loader, val_loader)
+    """
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=loader_params.batch_size,
+        shuffle=True,
+        num_workers=loader_params.num_workers,
+        pin_memory=loader_params.pin_memory,
+    )
 
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=config.get("data", {}).get("batch_size", 64),
-            shuffle=False,
-            num_workers=config.get("data", {}).get("num_workers", 4),
-            pin_memory=config.get("data", {}).get("pin_memory", True),
-        )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=loader_params.batch_size,
+        shuffle=False,
+        num_workers=loader_params.num_workers,
+        pin_memory=loader_params.pin_memory,
+    )
 
-        logger.info(f"Train dataset: {len(train_dataset)} samples")
-        logger.info(f"Validation dataset: {len(val_dataset)} samples")
-        logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Train dataset: {len(train_dataset)} samples")
+    logger.info(f"Validation dataset: {len(val_dataset)} samples")
 
-    except Exception as e:
-        logger.error(f"Failed to create dataset: {e}")
-        raise
+    return train_loader, val_loader
 
-    # モデルを作成
+
+def create_model(
+    config: Dict[str, Any],
+    num_classes: int,
+    dataset_type: str,
+    in_channels: Optional[int] = None,
+    device: torch.device = torch.device("cuda"),
+    logger=None,
+) -> nn.Module:
+    """モデルを作成
+
+    Args:
+        config: 設定辞書
+        num_classes: クラス数
+        dataset_type: データセットタイプ ("sensor" or "image")
+        in_channels: 入力チャネル数（センサーデータの場合）
+        device: デバイス
+        logger: ロガー
+
+    Returns:
+        作成されたモデル
+    """
     if dataset_type == "sensor":
-        # センサーモデル
+        if in_channels is None:
+            raise ValueError("in_channels is required for sensor models")
+
         model = SensorClassificationModel(
             in_channels=in_channels,
             num_classes=num_classes,
@@ -311,6 +382,200 @@ def main(args: argparse.Namespace) -> None:
         f"Total params: {param_info['total']:,}, "
         f"Trainable: {param_info['trainable']:,}"
     )
+
+    return model
+
+
+def log_validation_metrics(
+    epoch: int,
+    train_loss: float,
+    train_acc: float,
+    val_metrics: Dict[str, float],
+    optimizer: torch.optim.Optimizer,
+    use_wandb: bool,
+    logger,
+) -> None:
+    """検証メトリクスをログ
+
+    Args:
+        epoch: エポック数
+        train_loss: トレーニング損失
+        train_acc: トレーニング精度
+        val_metrics: 検証メトリクス
+        optimizer: オプティマイザー
+        use_wandb: W&Bを使用するか
+        logger: ロガー
+    """
+    logger.info(
+        f"Val Loss: {val_metrics['loss']:.4f}, "
+        f"Val Acc: {val_metrics['accuracy']:.2f}%, "
+        f"Val F1: {val_metrics['f1']:.4f}"
+    )
+
+    # W&Bにログ
+    if use_wandb:
+        wandb.log(
+            {
+                "train/epoch_loss": train_loss,
+                "train/epoch_accuracy": train_acc,
+                "val/loss": val_metrics["loss"],
+                "val/accuracy": val_metrics["accuracy"],
+                "val/precision": val_metrics["precision"],
+                "val/recall": val_metrics["recall"],
+                "val/f1": val_metrics["f1"],
+                "train/learning_rate": optimizer.param_groups[0]["lr"],
+                "train/epoch": epoch,
+            }
+        )
+
+
+def run_training_loop(
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+    early_stopping: EarlyStopping,
+    config: Dict[str, Any],
+    device: torch.device,
+    use_wandb: bool,
+    logger,
+) -> float:
+    """トレーニングループを実行
+
+    Args:
+        model: モデル
+        train_loader: トレーニングデータローダー
+        val_loader: 検証データローダー
+        criterion: 損失関数
+        optimizer: オプティマイザー
+        scheduler: スケジューラー
+        early_stopping: Early stopping オブジェクト
+        config: 設定辞書
+        device: デバイス
+        use_wandb: W&Bを使用するか
+        logger: ロガー
+
+    Returns:
+        ベスト精度
+    """
+    best_metric = 0.0
+    num_epochs = config["training"]["epochs"]
+    eval_interval = config.get("evaluation", {}).get(
+        "eval_interval", DEFAULT_EVAL_INTERVAL
+    )
+
+    logger.info("=" * 80)
+    logger.info("Starting training...")
+    logger.info("=" * 80)
+
+    for epoch in range(1, num_epochs + 1):
+        logger.info(f"\nEpoch {epoch}/{num_epochs}")
+
+        # 学習
+        train_loss, train_acc = train_epoch(
+            model, train_loader, criterion, optimizer, device, epoch, use_wandb
+        )
+
+        logger.info(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+
+        # 評価
+        if epoch % eval_interval == 0:
+            val_metrics = evaluate(model, val_loader, criterion, device)
+
+            log_validation_metrics(
+                epoch, train_loss, train_acc, val_metrics, optimizer, use_wandb, logger
+            )
+
+            # ベストメトリクスの更新
+            current_metric = val_metrics["accuracy"]
+            if current_metric > best_metric:
+                best_metric = current_metric
+                logger.info(f"New best accuracy: {best_metric:.4f}")
+
+            # Early stoppingチェック
+            if early_stopping(current_metric):
+                logger.info(f"Early stopping triggered after {epoch} epochs")
+                break
+
+        # 学習率を更新
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                if epoch % eval_interval == 0:
+                    scheduler.step(val_metrics["loss"])
+            else:
+                scheduler.step()
+
+            current_lr = optimizer.param_groups[0]["lr"]
+            logger.info(f"Learning rate: {current_lr:.6f}")
+
+    return best_metric
+
+
+def main(args: argparse.Namespace) -> None:
+    """メイン関数
+
+    Args:
+        args: コマンドライン引数
+    """
+    # 設定をロード
+    config = load_config(args.config)
+    validate_config(config, mode="finetune")
+
+    # 実験ディレクトリを作成
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+
+    # 設定ファイルを実験ディレクトリにコピー
+    shutil.copy(args.config, experiment_dirs.root / "config.yaml")
+
+    # ロガーをセットアップ
+    logger = setup_logger("finetune", str(experiment_dirs.log))
+    logger.info(f"Experiment directory: {experiment_dirs.root}")
+    logger.info(f"Configuration loaded from {args.config}")
+    logger.info(f"Starting fine-tuning with config: {config['model']['name']}")
+
+    # シード設定
+    set_seed(config["seed"])
+    logger.info(f"Random seed set to {config['seed']}")
+
+    # デバイス設定
+    device = get_device(config["device"])
+    logger.info(f"Using device: {device}")
+
+    # データセットとデータローダーを作成
+    dataset_type = config.get("dataset_type", "image")
+
+    try:
+        if dataset_type == "sensor":
+            # センサーデータの場合
+            train_dataset, val_dataset, num_classes, in_channels, sequence_length = (
+                create_sensor_datasets(config, logger)
+            )
+        else:
+            # 画像データの場合
+            train_dataset, val_dataset, num_classes = create_image_datasets(
+                config, logger
+            )
+            in_channels = None
+
+        # DataLoaderパラメータを作成
+        loader_params = DataLoaderParams.from_config(config)
+
+        # DataLoaderを作成
+        train_loader, val_loader = create_data_loaders(
+            train_dataset, val_dataset, loader_params, logger
+        )
+
+        logger.info(f"Number of classes: {num_classes}")
+
+    except Exception as e:
+        logger.error(f"Failed to create dataset: {e}")
+        raise
+
+    # モデルを作成
+    model = create_model(config, num_classes, dataset_type, in_channels, device, logger)
 
     # 損失関数を定義
     criterion = nn.CrossEntropyLoss(
@@ -339,75 +604,29 @@ def main(args: argparse.Namespace) -> None:
 
     # Early stoppingを初期化
     early_stopping = EarlyStopping(
-        patience=config.get("early_stopping", {}).get("patience", 10),
-        min_delta=config.get("early_stopping", {}).get("min_delta", 0.001),
+        patience=config.get("early_stopping", {}).get(
+            "patience", DEFAULT_EARLY_STOPPING_PATIENCE
+        ),
+        min_delta=config.get("early_stopping", {}).get(
+            "min_delta", DEFAULT_EARLY_STOPPING_MIN_DELTA
+        ),
         mode="max",  # 精度を最大化
     )
 
-    # トレーニングループ
-    best_metric = 0.0
-
-    logger.info("=" * 80)
-    logger.info("Starting training...")
-    logger.info("=" * 80)
-
-    for epoch in range(1, config["training"]["epochs"] + 1):
-        logger.info(f"\nEpoch {epoch}/{config['training']['epochs']}")
-
-        # 学習
-        train_loss, train_acc = train_epoch(
-            model, train_loader, criterion, optimizer, device, epoch, use_wandb
-        )
-
-        logger.info(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
-
-        # 評価
-        eval_interval = config.get("evaluation", {}).get("eval_interval", 1)
-        if epoch % eval_interval == 0:
-            val_metrics = evaluate(model, val_loader, criterion, device)
-
-            logger.info(
-                f"Val Loss: {val_metrics['loss']:.4f}, "
-                f"Val Acc: {val_metrics['accuracy']:.2f}%, "
-                f"Val F1: {val_metrics['f1']:.4f}"
-            )
-
-            # W&Bにログ
-            if use_wandb:
-                wandb.log(
-                    {
-                        "train/epoch_loss": train_loss,
-                        "train/epoch_accuracy": train_acc,
-                        "val/loss": val_metrics["loss"],
-                        "val/accuracy": val_metrics["accuracy"],
-                        "val/precision": val_metrics["precision"],
-                        "val/recall": val_metrics["recall"],
-                        "val/f1": val_metrics["f1"],
-                        "train/learning_rate": optimizer.param_groups[0]["lr"],
-                        "train/epoch": epoch,
-                    }
-                )
-
-            # ベストメトリクスの更新（checkpoint保存なし）
-            current_metric = val_metrics["accuracy"]
-            if current_metric > best_metric:
-                best_metric = current_metric
-                logger.info(f"New best accuracy: {best_metric:.4f}")
-
-            # Early stoppingチェック
-            if early_stopping(current_metric):
-                logger.info(f"Early stopping triggered after {epoch} epochs")
-                break
-
-        # 学習率を更新
-        if scheduler is not None:
-            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(val_metrics["loss"])
-            else:
-                scheduler.step()
-
-            current_lr = optimizer.param_groups[0]["lr"]
-            logger.info(f"Learning rate: {current_lr:.6f}")
+    # トレーニングループを実行
+    best_metric = run_training_loop(
+        model,
+        train_loader,
+        val_loader,
+        criterion,
+        optimizer,
+        scheduler,
+        early_stopping,
+        config,
+        device,
+        use_wandb,
+        logger,
+    )
 
     # 完了
     logger.info("=" * 80)
@@ -422,10 +641,14 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Supervised Fine-tuning", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description="Supervised Fine-tuning",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--config", type=str, default="configs/finetune.yaml", help="Path to configuration file"
+        "--config",
+        type=str,
+        default="configs/finetune.yaml",
+        help="Path to configuration file",
     )
 
     args = parser.parse_args()

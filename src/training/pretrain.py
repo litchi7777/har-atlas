@@ -5,32 +5,31 @@ SSL手法（SimCLR、MoCo等）を用いた事前学習を実行します。
 """
 
 import argparse
+import glob
+import shutil
 import sys
-from pathlib import Path
-from typing import Any, Dict
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
-import shutil
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-from src.models.sensor_models import IntegratedSSLModel, Resnet
-from src.data.batch_dataset import SubjectWiseLoader, MultiTaskSubjectWiseLoader
 from src.data.augmentations import Permutation, Reverse, TimeWarping
+from src.data.batch_dataset import MultiTaskSubjectWiseLoader, SubjectWiseLoader
 from src.losses import IntegratedSSLLoss
+from src.models.sensor_models import IntegratedSSLModel, Resnet
+from src.utils.common import count_parameters, get_device, save_checkpoint, set_seed
 from src.utils.config import load_config, validate_config
-from src.utils.common import set_seed, get_device, save_checkpoint, count_parameters
 from src.utils.logger import setup_logger
-from src.utils.training import get_optimizer, get_scheduler, init_wandb, AverageMeter
-
-# Import from har-unified-dataset submodule (after project_root is defined)
-# This will be moved to the main function to avoid import-time errors
+from src.utils.training import AverageMeter, get_optimizer, get_scheduler, init_wandb
 
 try:
     import wandb
@@ -39,54 +38,112 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
+# 定数
+DEFAULT_DATA_ROOT = "har-unified-dataset/data/processed"
+DEFAULT_SSL_TASKS = ["binary_permute", "binary_reverse", "binary_timewarp"]
+DEFAULT_TASK_WEIGHTS = [1.0, 1.0, 1.0]
+DEFAULT_APPLY_PROB = 0.5
+DEFAULT_N_SEGMENTS = 4
+DEFAULT_TIMEWARP_SIGMA = 0.2
+DEFAULT_TIMEWARP_KNOT = 4
+LOG_INTERVAL = 10
+NUM_TASK_METERS = 3
 
-def setup_batch_dataloaders(config, logger, use_multitask, multitask_config):
-    """
-    バッチデータローダーのセットアップ
+
+@dataclass
+class DataLoaderConfig:
+    """データローダー設定を保持するデータクラス"""
+
+    data_root: str
+    datasets: List[str]
+    exclude_patterns: List[str]
+    sample_threshold: int
+    train_num_samples: int
+    val_num_samples: int
+    test_num_samples: int
+    batch_size: int
+
+
+@dataclass
+class ExperimentDirs:
+    """実験ディレクトリ構造を保持するデータクラス"""
+
+    root: Path
+    checkpoint: Path
+    log: Path
+
+    @classmethod
+    def create(cls, base_dir: Path, run_id: str) -> "ExperimentDirs":
+        """実験ディレクトリを作成"""
+        root = base_dir / "pretrain" / f"run_{run_id}"
+        checkpoint = root / "checkpoints"
+        log = root / "logs"
+
+        root.mkdir(parents=True, exist_ok=True)
+        checkpoint.mkdir(exist_ok=True)
+        log.mkdir(exist_ok=True)
+
+        return cls(root=root, checkpoint=checkpoint, log=log)
+
+
+def get_ssl_tasks_from_config(config: Dict[str, Any]) -> List[str]:
+    """設定からSSLタスクリストを取得
 
     Args:
         config: 設定辞書
-        logger: ロガー
-        use_multitask: マルチタスク学習を使用するか
-        multitask_config: マルチタスク設定
 
     Returns:
-        train_loader, val_loader, test_loader, in_channels, sequence_length
+        SSLタスクのリスト
     """
-    import glob
-    from torch.utils.data import RandomSampler
+    multitask_config = config.get("multitask", {})
+    return multitask_config.get("ssl_tasks", DEFAULT_SSL_TASKS)
 
-    sensor_config = config["sensor_data"]
-    batch_loader_config = sensor_config["batch_loader"]
 
-    logger.info(f"Using batch data loader")
+def create_augmentation_transforms(
+    ssl_tasks: List[str],
+) -> Dict[str, Any]:
+    """SSL taskに応じた拡張変換を作成
 
-    # 拡張を準備（マルチタスクの場合）
-    specific_transforms = {}
-    if use_multitask:
-        ssl_tasks = multitask_config.get(
-            "ssl_tasks", ["binary_permute", "binary_reverse", "binary_timewarp"]
-        )
-        binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
-        aug_names = [task.replace("binary_", "") for task in binary_tasks]
+    Args:
+        ssl_tasks: SSLタスクのリスト
 
-        for aug_name in aug_names:
-            if aug_name == "permute":
-                specific_transforms["permute"] = Permutation(n_segments=4)
-            elif aug_name == "reverse":
-                specific_transforms["reverse"] = Reverse()
-            elif aug_name == "timewarp":
-                specific_transforms["timewarp"] = TimeWarping(sigma=0.2, knot=4)
+    Returns:
+        拡張変換の辞書 {'permute': Transform, 'reverse': Transform, ...}
+    """
+    binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
+    aug_names = [task.replace("binary_", "") for task in binary_tasks]
 
-        apply_prob = multitask_config.get("apply_prob", 0.5)
-        logger.info(f"Binary SSL tasks: {binary_tasks}")
-        logger.info(f"Augmentations: {aug_names}")
+    transforms = {}
+    for aug_name in aug_names:
+        if aug_name == "permute":
+            transforms["permute"] = Permutation(n_segments=DEFAULT_N_SEGMENTS)
+        elif aug_name == "reverse":
+            transforms["reverse"] = Reverse()
+        elif aug_name == "timewarp":
+            transforms["timewarp"] = TimeWarping(
+                sigma=DEFAULT_TIMEWARP_SIGMA, knot=DEFAULT_TIMEWARP_KNOT
+            )
 
-    # データセット設定を取得
-    data_root = sensor_config.get("data_root", "har-unified-dataset/data/processed")
-    datasets = sensor_config.get("datasets", [])
-    exclude_patterns = batch_loader_config.get("exclude_patterns", [])
+    return transforms
 
+
+def collect_data_paths(
+    data_root: str, datasets: List[str], exclude_patterns: List[str], logger
+) -> List[str]:
+    """データセットからファイルパスを収集
+
+    Args:
+        data_root: データルートディレクトリ
+        datasets: データセット名のリスト
+        exclude_patterns: 除外パターンのリスト
+        logger: ロガー
+
+    Returns:
+        収集されたファイルパスのリスト
+
+    Raises:
+        ValueError: データセットが空、またはファイルが見つからない場合
+    """
     if not datasets:
         raise ValueError("datasets list is empty in sensor_data config")
 
@@ -97,52 +154,167 @@ def setup_batch_dataloaders(config, logger, use_multitask, multitask_config):
     for dataset_name in datasets:
         pattern = f"{data_root}/{dataset_name}/*/*/ACC/X.npy"
         paths = sorted(glob.glob(pattern))
-        logger.info(f"Dataset '{dataset_name}' (ACC only): {pattern} -> {len(paths)} files")
+        logger.info(
+            f"Dataset '{dataset_name}' (ACC only): {pattern} -> {len(paths)} files"
+        )
         all_paths.extend(paths)
 
     # 除外パターンのフィルタリング
     if exclude_patterns:
-        all_paths = [p for p in all_paths if not any(exclude in p for exclude in exclude_patterns)]
+        all_paths = [
+            p
+            for p in all_paths
+            if not any(exclude in p for exclude in exclude_patterns)
+        ]
 
     if len(all_paths) == 0:
-        raise ValueError(f"No data files found")
+        raise ValueError("No data files found")
 
     logger.info(f"Total: {len(all_paths)} files")
 
-    sample_threshold = batch_loader_config["sample_threshold"]
+    return all_paths
 
+
+def create_data_loaders(
+    paths: List[str],
+    config: DataLoaderConfig,
+    use_multitask: bool,
+    specific_transforms: Optional[Dict[str, Any]] = None,
+    apply_prob: float = DEFAULT_APPLY_PROB,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """データローダーを作成
+
+    Args:
+        paths: データファイルパスのリスト
+        config: データローダー設定
+        use_multitask: マルチタスク学習を使用するか
+        specific_transforms: 拡張変換の辞書
+        apply_prob: 拡張適用確率
+
+    Returns:
+        (train_loader, val_loader, test_loader)
+    """
+    # データセットを作成
     if use_multitask:
-        train_set = MultiTaskSubjectWiseLoader(
-            all_paths,
-            sample_threshold=sample_threshold,
-            specific_transforms=specific_transforms,
+        dataset = MultiTaskSubjectWiseLoader(
+            paths,
+            sample_threshold=config.sample_threshold,
+            specific_transforms=specific_transforms or {},
             apply_prob=apply_prob,
         )
     else:
-        train_set = SubjectWiseLoader(all_paths, sample_threshold=sample_threshold)
-
-    # サンプル数設定
-    train_num_samples = batch_loader_config.get("train_num_samples", 1000)
-    val_num_samples = batch_loader_config.get("val_num_samples", 100)
-    test_num_samples = batch_loader_config.get("test_num_samples", 100)
-    batch_size = batch_loader_config.get("batch_size", 4)
+        dataset = SubjectWiseLoader(paths, sample_threshold=config.sample_threshold)
 
     # DataLoaderを作成（複数の被験者データを1バッチに含める）
-    train_sampler = RandomSampler(train_set, replacement=True, num_samples=train_num_samples)
+    train_sampler = RandomSampler(
+        dataset, replacement=True, num_samples=config.train_num_samples
+    )
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, drop_last=True, sampler=train_sampler
+        dataset, batch_size=config.batch_size, drop_last=True, sampler=train_sampler
     )
 
-    val_sampler = RandomSampler(train_set, replacement=True, num_samples=val_num_samples)
-    val_loader = DataLoader(train_set, batch_size=batch_size, drop_last=True, sampler=val_sampler)
+    val_sampler = RandomSampler(
+        dataset, replacement=True, num_samples=config.val_num_samples
+    )
+    val_loader = DataLoader(
+        dataset, batch_size=config.batch_size, drop_last=True, sampler=val_sampler
+    )
 
-    test_sampler = RandomSampler(train_set, replacement=True, num_samples=test_num_samples)
-    test_loader = DataLoader(train_set, batch_size=batch_size, drop_last=True, sampler=test_sampler)
+    test_sampler = RandomSampler(
+        dataset, replacement=True, num_samples=config.test_num_samples
+    )
+    test_loader = DataLoader(
+        dataset, batch_size=config.batch_size, drop_last=True, sampler=test_sampler
+    )
 
-    # データ形状を取得（最初のバッチから）
-    sample_x, _ = train_set[0]
+    return train_loader, val_loader, test_loader
+
+
+def get_input_shape(dataset: SubjectWiseLoader) -> Tuple[int, int]:
+    """データセットから入力形状を取得
+
+    Args:
+        dataset: データセット
+
+    Returns:
+        (channels, sequence_length)
+    """
+    sample_x, _ = dataset[0]
     in_channels = sample_x.shape[1]
     sequence_length = sample_x.shape[2]
+    return in_channels, sequence_length
+
+
+def setup_batch_dataloaders(
+    config: Dict[str, Any],
+    logger,
+    use_multitask: bool,
+    multitask_config: Dict[str, Any],
+) -> Tuple[DataLoader, DataLoader, DataLoader, int, int]:
+    """バッチデータローダーのセットアップ
+
+    Args:
+        config: 設定辞書
+        logger: ロガー
+        use_multitask: マルチタスク学習を使用するか
+        multitask_config: マルチタスク設定
+
+    Returns:
+        (train_loader, val_loader, test_loader, in_channels, sequence_length)
+    """
+    sensor_config = config["sensor_data"]
+    batch_loader_config = sensor_config["batch_loader"]
+
+    logger.info("Using batch data loader")
+
+    # 拡張を準備（マルチタスクの場合）
+    specific_transforms = {}
+    if use_multitask:
+        ssl_tasks = get_ssl_tasks_from_config(config)
+        specific_transforms = create_augmentation_transforms(ssl_tasks)
+        binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
+        aug_names = list(specific_transforms.keys())
+
+        logger.info(f"Binary SSL tasks: {binary_tasks}")
+        logger.info(f"Augmentations: {aug_names}")
+
+    # データローダー設定を構築
+    loader_config = DataLoaderConfig(
+        data_root=sensor_config.get("data_root", DEFAULT_DATA_ROOT),
+        datasets=sensor_config.get("datasets", []),
+        exclude_patterns=batch_loader_config.get("exclude_patterns", []),
+        sample_threshold=batch_loader_config["sample_threshold"],
+        train_num_samples=batch_loader_config.get("train_num_samples", 1000),
+        val_num_samples=batch_loader_config.get("val_num_samples", 100),
+        test_num_samples=batch_loader_config.get("test_num_samples", 100),
+        batch_size=batch_loader_config.get("batch_size", 4),
+    )
+
+    # データパスを収集
+    all_paths = collect_data_paths(
+        loader_config.data_root,
+        loader_config.datasets,
+        loader_config.exclude_patterns,
+        logger,
+    )
+
+    # データローダーを作成
+    apply_prob = multitask_config.get("apply_prob", DEFAULT_APPLY_PROB)
+    train_loader, val_loader, test_loader = create_data_loaders(
+        all_paths,
+        loader_config,
+        use_multitask,
+        specific_transforms,
+        apply_prob,
+    )
+
+    # 入力形状を取得
+    dataset = (
+        train_loader.dataset.dataset
+        if hasattr(train_loader.dataset, "dataset")
+        else train_loader.dataset
+    )
+    in_channels, sequence_length = get_input_shape(dataset)
 
     logger.info(f"Input shape: ({in_channels}, {sequence_length})")
     logger.info(f"Training batches per epoch: {len(train_loader)}")
@@ -150,6 +322,51 @@ def setup_batch_dataloaders(config, logger, use_multitask, multitask_config):
     logger.info(f"Test batches: {len(test_loader)}")
 
     return train_loader, val_loader, test_loader, in_channels, sequence_length
+
+
+def process_multitask_batch(
+    x: torch.Tensor,
+    labels_tensor: torch.Tensor,
+    model: nn.Module,
+    criterion: nn.Module,
+    device: torch.device,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
+    """マルチタスクバッチを処理
+
+    Args:
+        x: 入力データ
+        labels_tensor: ラベルテンソル
+        model: モデル
+        criterion: 損失関数
+        device: デバイス
+
+    Returns:
+        (total_loss, task_losses, x) 処理後のデータ
+    """
+    # バッチローダー使用時は [batch_size, sample_threshold, channels, time]
+    # -> [batch_size * sample_threshold, channels, time] にreshape
+    if x.dim() == 4:
+        batch_size_loader, sample_threshold, channels, time = x.shape
+        x = x.reshape(batch_size_loader * sample_threshold, channels, time)
+        labels_tensor = labels_tensor.reshape(batch_size_loader * sample_threshold, -1)
+
+    x = x.to(device)
+    labels_tensor = labels_tensor.to(device)
+
+    # 各タスクについて順伝播
+    predictions = {}
+    labels = {}
+    ssl_tasks = model.ssl_tasks
+
+    for i, task in enumerate(ssl_tasks):
+        pred = model(x, task)
+        predictions[task] = pred
+        labels[task] = labels_tensor[:, i]
+
+    # 損失計算
+    total_loss, task_losses = criterion(predictions, labels)
+
+    return total_loss, task_losses, x
 
 
 def train_epoch(
@@ -162,8 +379,7 @@ def train_epoch(
     use_wandb: bool = False,
     multitask: bool = False,
 ) -> Dict[str, float]:
-    """
-    1エポック分の学習を実行
+    """1エポック分の学習を実行
 
     Args:
         model: 学習するモデル
@@ -180,134 +396,329 @@ def train_epoch(
     """
     model.train()
     loss_meter = AverageMeter("Loss")
-    task_loss_meters = [AverageMeter(f"Task{i+1}") for i in range(3)] if multitask else None
+    task_loss_meters = (
+        [AverageMeter(f"Task{i+1}") for i in range(NUM_TASK_METERS)]
+        if multitask
+        else None
+    )
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
 
     for batch_idx, batch_data in enumerate(pbar):
+        optimizer.zero_grad()
+
         if multitask:
             # マルチタスク学習: (x, labels)
             x, labels_tensor = batch_data
+            total_loss, task_losses, x = process_multitask_batch(
+                x, labels_tensor, model, criterion, device
+            )
+            loss = total_loss
 
-            # バッチローダー使用時は [batch_size, sample_threshold, channels, time]
-            # -> [batch_size * sample_threshold, channels, time] にreshape
-            if x.dim() == 4:
-                batch_size_loader, sample_threshold, channels, time = x.shape
-                x = x.reshape(batch_size_loader * sample_threshold, channels, time)
-                labels_tensor = labels_tensor.reshape(batch_size_loader * sample_threshold, -1)
-
-            x = x.to(device)
-            labels_tensor = labels_tensor.to(device)
-
-            optimizer.zero_grad()
-
-            # 各タスクについて順伝播
-            predictions = {}
-            labels = {}
+            # タスク別損失を更新
             ssl_tasks = model.ssl_tasks
-
-            for i, task in enumerate(ssl_tasks):
-                pred = model(x, task)  # (batch_size, num_classes) or (batch_size, 1)
-                predictions[task] = pred
-                labels[task] = labels_tensor[:, i]  # (batch_size,)
-
-            # 損失計算
-            total_loss, task_losses = criterion(predictions, labels)
-
-            # 統計を更新
             for i, task in enumerate(ssl_tasks):
                 task_loss_meters[i].update(task_losses[task].item(), x.size(0))
-
-            loss = total_loss
         else:
             # 通常のSSL: (views, _)
             views, _ = batch_data
             view1, view2 = views[0].to(device), views[1].to(device)
 
-            optimizer.zero_grad()
-
             # 順伝播
             z1, z2 = model(view1, view2)
             loss = criterion(z1, z2)
+            x = view1  # for batch size
 
         # 逆伝播
         loss.backward()
         optimizer.step()
 
         # 統計を更新
-        loss_meter.update(loss.item(), x.size(0) if multitask else view1.size(0))
+        loss_meter.update(loss.item(), x.size(0))
 
+        # プログレスバーを更新
         if multitask:
             pbar.set_postfix(
                 {
                     "loss": f"{loss_meter.avg:.4f}",
-                    task_loss_meters[0].name: f"{task_loss_meters[0].avg:.4f}",
-                    task_loss_meters[1].name: f"{task_loss_meters[1].avg:.4f}",
-                    task_loss_meters[2].name: f"{task_loss_meters[2].avg:.4f}",
+                    **{
+                        meter.name: f"{meter.avg:.4f}"
+                        for meter in task_loss_meters[: len(model.ssl_tasks)]
+                    },
                 }
             )
         else:
             pbar.set_postfix({"loss": f"{loss_meter.avg:.4f}"})
 
         # W&Bにログ
-        if use_wandb and batch_idx % 10 == 0:
+        if use_wandb and batch_idx % LOG_INTERVAL == 0:
             log_dict = {
                 "train/batch_loss": loss.item(),
                 "train/step": epoch * len(dataloader) + batch_idx,
             }
             if multitask:
+                ssl_tasks = model.ssl_tasks
                 for i, task in enumerate(ssl_tasks):
                     log_dict[f"train/batch_{task}_loss"] = task_losses[task].item()
             wandb.log(log_dict)
 
+    # 結果を返す
     if multitask:
         result = {"loss": loss_meter.avg}
-        for i, meter in enumerate(task_loss_meters):
+        for i, meter in enumerate(task_loss_meters[: len(model.ssl_tasks)]):
             result[f"task{i+1}_loss"] = meter.avg
         return result
     else:
         return {"loss": loss_meter.avg}
 
 
-def main(args: argparse.Namespace) -> None:
+def create_model(
+    config: Dict[str, Any],
+    in_channels: int,
+    use_multitask: bool,
+    multitask_config: Dict[str, Any],
+    device: torch.device,
+    logger,
+) -> nn.Module:
+    """モデルを作成
+
+    Args:
+        config: 設定辞書
+        in_channels: 入力チャネル数
+        use_multitask: マルチタスク学習を使用するか
+        multitask_config: マルチタスク設定
+        device: デバイス
+        logger: ロガー
+
+    Returns:
+        作成されたモデル
     """
-    メイン関数
+    if use_multitask:
+        # 統合型SSLモデル
+        ssl_tasks = get_ssl_tasks_from_config(config)
+        hidden_dim = config["model"].get("feature_dim", 256)
+
+        # バックボーンを作成
+        backbone = Resnet(n_channels=in_channels, foundationUK=False)
+
+        # 統合モデルを作成
+        model = IntegratedSSLModel(
+            backbone=backbone, ssl_tasks=ssl_tasks, hidden_dim=hidden_dim
+        ).to(device)
+
+        logger.info(f"SSL tasks: {ssl_tasks}")
+    else:
+        # 通常のセンサーSSLモデル（現在は未サポート）
+        raise NotImplementedError("Non-multitask SSL model is not yet implemented")
+
+    param_info = count_parameters(model)
+    logger.info(
+        f"Model created: {config['model']['backbone']}, "
+        f"Total params: {param_info['total']:,}, "
+        f"Trainable: {param_info['trainable']:,}"
+    )
+
+    return model
+
+
+def create_criterion(
+    use_multitask: bool, multitask_config: Dict[str, Any], logger
+) -> nn.Module:
+    """損失関数を作成
+
+    Args:
+        use_multitask: マルチタスク学習を使用するか
+        multitask_config: マルチタスク設定
+        logger: ロガー
+
+    Returns:
+        損失関数
+    """
+    if use_multitask:
+        # 統合型SSL損失関数
+        ssl_tasks = multitask_config.get("ssl_tasks", DEFAULT_SSL_TASKS)
+        task_weights_list = multitask_config.get("task_weights", DEFAULT_TASK_WEIGHTS)
+        task_weights = {
+            task: weight for task, weight in zip(ssl_tasks, task_weights_list)
+        }
+
+        criterion = IntegratedSSLLoss(ssl_tasks=ssl_tasks, task_weights=task_weights)
+        logger.info(f"Task weights: {task_weights}")
+    else:
+        # 通常のSSL損失（現在は未サポート）
+        raise NotImplementedError("Non-multitask SSL loss is not yet implemented")
+
+    return criterion
+
+
+def log_epoch_metrics(
+    epoch: int,
+    train_metrics: Dict[str, float],
+    use_multitask: bool,
+    multitask_config: Dict[str, Any],
+    optimizer: torch.optim.Optimizer,
+    use_wandb: bool,
+    logger,
+) -> None:
+    """エポックメトリクスをログ
+
+    Args:
+        epoch: エポック数
+        train_metrics: トレーニングメトリクス
+        use_multitask: マルチタスク学習を使用するか
+        multitask_config: マルチタスク設定
+        optimizer: オプティマイザー
+        use_wandb: W&Bを使用するか
+        logger: ロガー
+    """
+    train_loss = train_metrics["loss"]
+
+    if use_multitask:
+        ssl_tasks = get_ssl_tasks_from_config({"multitask": multitask_config})
+        task_losses_str = ", ".join(
+            [
+                f"{task}: {train_metrics[f'task{i+1}_loss']:.4f}"
+                for i, task in enumerate(ssl_tasks)
+            ]
+        )
+        logger.info(f"Epoch {epoch} - Loss: {train_loss:.4f}, {task_losses_str}")
+    else:
+        logger.info(f"Epoch {epoch} - Average Loss: {train_loss:.4f}")
+
+    # W&Bにログ
+    if use_wandb:
+        log_dict = {
+            "train/epoch_loss": train_loss,
+            "train/learning_rate": optimizer.param_groups[0]["lr"],
+            "train/epoch": epoch,
+        }
+        if use_multitask:
+            ssl_tasks = get_ssl_tasks_from_config({"multitask": multitask_config})
+            for i, task in enumerate(ssl_tasks):
+                log_dict[f"train/epoch_{task}_loss"] = train_metrics[f"task{i+1}_loss"]
+        wandb.log(log_dict)
+
+
+def run_training_loop(
+    model: nn.Module,
+    train_loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+    config: Dict[str, Any],
+    experiment_dirs: ExperimentDirs,
+    device: torch.device,
+    use_wandb: bool,
+    use_multitask: bool,
+    multitask_config: Dict[str, Any],
+    logger,
+) -> None:
+    """トレーニングループを実行
+
+    Args:
+        model: モデル
+        train_loader: トレーニングデータローダー
+        criterion: 損失関数
+        optimizer: オプティマイザー
+        scheduler: スケジューラー
+        config: 設定辞書
+        experiment_dirs: 実験ディレクトリ
+        device: デバイス
+        use_wandb: W&Bを使用するか
+        use_multitask: マルチタスク学習を使用するか
+        multitask_config: マルチタスク設定
+        logger: ロガー
+    """
+    best_loss = float("inf")
+    save_path = str(experiment_dirs.checkpoint)
+    num_epochs = config["training"]["epochs"]
+
+    logger.info("=" * 80)
+    logger.info("Starting training...")
+    logger.info("=" * 80)
+
+    for epoch in range(1, num_epochs + 1):
+        logger.info(f"\nEpoch {epoch}/{num_epochs}")
+
+        # 学習
+        train_metrics = train_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            epoch,
+            use_wandb,
+            use_multitask,
+        )
+
+        # メトリクスをログ
+        log_epoch_metrics(
+            epoch,
+            train_metrics,
+            use_multitask,
+            multitask_config,
+            optimizer,
+            use_wandb,
+            logger,
+        )
+
+        # 学習率を更新
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(train_metrics["loss"])
+            else:
+                scheduler.step()
+
+            current_lr = optimizer.param_groups[0]["lr"]
+            logger.info(f"Learning rate: {current_lr:.6f}")
+
+        # チェックポイントを保存
+        save_freq = config["checkpoint"].get("save_freq", 10)
+        if epoch % save_freq == 0 or epoch == num_epochs:
+            is_best = train_metrics["loss"] < best_loss
+
+            if is_best:
+                best_loss = train_metrics["loss"]
+                logger.info(f"New best loss: {best_loss:.4f}")
+
+            save_file = save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                metrics=train_metrics,
+                save_path=save_path,
+                is_best=is_best,
+            )
+            logger.info(f"Checkpoint saved to {save_file}")
+
+    # 完了
+    logger.info("=" * 80)
+    logger.info("Pre-training completed!")
+    logger.info(f"Best loss: {best_loss:.4f}")
+    logger.info("=" * 80)
+
+
+def main(args: argparse.Namespace) -> None:
+    """メイン関数
 
     Args:
         args: コマンドライン引数
     """
-    # Import from har-unified-dataset submodule
-    import sys
-
-    har_dataset_path = project_root / "har-unified-dataset" / "src"
-    sys.path.insert(0, str(har_dataset_path))
-    from dataset_info import get_dataset_info, select_sensors
-
     # 設定をロード
     config = load_config(args.config)
     validate_config(config, mode="pretrain")
 
     # 実験ディレクトリを作成
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = Path("experiments") / "pretrain" / f"run_{run_id}"
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-
-    # checkpoint保存用ディレクトリ
-    checkpoint_dir = experiment_dir / "checkpoints"
-    checkpoint_dir.mkdir(exist_ok=True)
-
-    # ログディレクトリ
-    log_dir = experiment_dir / "logs"
-    log_dir.mkdir(exist_ok=True)
+    experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
 
     # 設定ファイルを実験ディレクトリにコピー
-    import shutil
+    shutil.copy(args.config, experiment_dirs.root / "config.yaml")
 
-    shutil.copy(args.config, experiment_dir / "config.yaml")
-
-    # ロガーをセットアップ（実験ディレクトリ内に）
-    logger = setup_logger("pretrain", str(log_dir))
-    logger.info(f"Experiment directory: {experiment_dir}")
+    # ロガーをセットアップ
+    logger = setup_logger("pretrain", str(experiment_dirs.log))
+    logger.info(f"Experiment directory: {experiment_dirs.root}")
     logger.info(f"Configuration loaded from {args.config}")
     logger.info(f"Starting pre-training with config: {config['model']['name']}")
 
@@ -325,76 +736,22 @@ def main(args: argparse.Namespace) -> None:
     logger.info(f"Multitask learning: {'Enabled' if use_multitask else 'Disabled'}")
 
     # データセットとデータローダーを作成
-    dataset_type = config.get("dataset_type", "sensor")
-
     try:
-        if dataset_type == "sensor":
-            # センサーデータの場合（常にバッチローダーを使用）
-            sensor_config = config["sensor_data"]
-
-            # バッチローダーを使用（メモリ効率化）
-            train_loader, val_loader, test_loader, in_channels, sequence_length = (
-                setup_batch_dataloaders(config, logger, use_multitask, multitask_config)
-            )
-
+        train_loader, val_loader, test_loader, in_channels, sequence_length = (
+            setup_batch_dataloaders(config, logger, use_multitask, multitask_config)
+        )
         logger.info(f"Number of batches: {len(train_loader)}")
-
     except Exception as e:
         logger.error(f"Failed to create dataset: {e}")
         raise
 
     # モデルを作成
-    if dataset_type == "sensor":
-        if use_multitask:
-            # 統合型SSLモデル
-            ssl_tasks = multitask_config.get("ssl_tasks", ["permute", "reverse", "timewarp"])
-            hidden_dim = config["model"].get("feature_dim", 256)
-
-            # バックボーンを作成
-            backbone = Resnet(n_channels=in_channels, foundationUK=False)
-
-            # 統合モデルを作成
-            model = IntegratedSSLModel(
-                backbone=backbone, ssl_tasks=ssl_tasks, hidden_dim=hidden_dim
-            ).to(device)
-
-            logger.info(f"SSL tasks: {ssl_tasks}")
-        else:
-            # 通常のセンサーSSLモデル
-            model = SensorSSLModel(
-                in_channels=in_channels,
-                backbone=config["model"]["backbone"],
-                projection_dim=config["model"].get("projection_dim", 128),
-                hidden_dim=config["model"].get("feature_dim", 256),
-            ).to(device)
-    else:
-        # 画像モデル（現在は未サポート）
-        model = SSLModel(config["model"]).to(device)
-
-    param_info = count_parameters(model)
-    logger.info(
-        f"Model created: {config['model']['backbone']}, "
-        f"Total params: {param_info['total']:,}, "
-        f"Trainable: {param_info['trainable']:,}"
+    model = create_model(
+        config, in_channels, use_multitask, multitask_config, device, logger
     )
 
-    # 損失関数を設定
-    if use_multitask:
-        # 統合型SSL損失関数
-        ssl_tasks = multitask_config.get("ssl_tasks", ["permute", "reverse", "timewarp"])
-        task_weights_list = multitask_config.get("task_weights", [1.0, 1.0, 1.0])
-        task_weights = {task: weight for task, weight in zip(ssl_tasks, task_weights_list)}
-
-        criterion = IntegratedSSLLoss(ssl_tasks=ssl_tasks, task_weights=task_weights)
-        logger.info(f"Task weights: {task_weights}")
-    else:
-        # 通常のSSL損失
-        ssl_method = config.get("ssl", {}).get("method", "simclr")
-        ssl_config = config.get("ssl", {}).copy()
-        # methodキーを削除（get_ssl_lossの第一引数として渡すため）
-        ssl_config.pop("method", None)
-        criterion = get_ssl_loss(ssl_method, **ssl_config)
-        logger.info(f"Using SSL method: {ssl_method}")
+    # 損失関数を作成
+    criterion = create_criterion(use_multitask, multitask_config, logger)
 
     # オプティマイザーを作成
     optimizer = get_optimizer(
@@ -414,82 +771,21 @@ def main(args: argparse.Namespace) -> None:
     # W&Bを初期化
     use_wandb = init_wandb(config, model)
 
-    # トレーニングループ
-    best_loss = float("inf")
-    save_path = str(checkpoint_dir)
-
-    logger.info("=" * 80)
-    logger.info("Starting training...")
-    logger.info("=" * 80)
-
-    for epoch in range(1, config["training"]["epochs"] + 1):
-        logger.info(f"\nEpoch {epoch}/{config['training']['epochs']}")
-
-        # 学習
-        train_metrics = train_epoch(
-            model, train_loader, criterion, optimizer, device, epoch, use_wandb, use_multitask
-        )
-
-        train_loss = train_metrics["loss"]
-        if use_multitask:
-            ssl_tasks = multitask_config.get("ssl_tasks", ["permute", "reverse", "timewarp"])
-            task_losses_str = ", ".join(
-                [
-                    f"{task}: {train_metrics[f'task{i+1}_loss']:.4f}"
-                    for i, task in enumerate(ssl_tasks)
-                ]
-            )
-            logger.info(f"Epoch {epoch} - Loss: {train_loss:.4f}, {task_losses_str}")
-        else:
-            logger.info(f"Epoch {epoch} - Average Loss: {train_loss:.4f}")
-
-        # 学習率を更新
-        if scheduler is not None:
-            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(train_loss)
-            else:
-                scheduler.step()
-
-            current_lr = optimizer.param_groups[0]["lr"]
-            logger.info(f"Learning rate: {current_lr:.6f}")
-
-        # W&Bにログ
-        if use_wandb:
-            log_dict = {
-                "train/epoch_loss": train_loss,
-                "train/learning_rate": optimizer.param_groups[0]["lr"],
-                "train/epoch": epoch,
-            }
-            if use_multitask:
-                ssl_tasks = multitask_config.get("ssl_tasks", ["permute", "reverse", "timewarp"])
-                for i, task in enumerate(ssl_tasks):
-                    log_dict[f"train/epoch_{task}_loss"] = train_metrics[f"task{i+1}_loss"]
-            wandb.log(log_dict)
-
-        # チェックポイントを保存
-        save_freq = config["checkpoint"].get("save_freq", 10)
-        if epoch % save_freq == 0 or epoch == config["training"]["epochs"]:
-            is_best = train_loss < best_loss
-
-            if is_best:
-                best_loss = train_loss
-                logger.info(f"New best loss: {best_loss:.4f}")
-
-            save_file = save_checkpoint(
-                model=model,
-                optimizer=optimizer,
-                epoch=epoch,
-                metrics=train_metrics,
-                save_path=save_path,
-                is_best=is_best,
-            )
-            logger.info(f"Checkpoint saved to {save_file}")
-
-    # 完了
-    logger.info("=" * 80)
-    logger.info("Pre-training completed!")
-    logger.info(f"Best loss: {best_loss:.4f}")
-    logger.info("=" * 80)
+    # トレーニングループを実行
+    run_training_loop(
+        model,
+        train_loader,
+        criterion,
+        optimizer,
+        scheduler,
+        config,
+        experiment_dirs,
+        device,
+        use_wandb,
+        use_multitask,
+        multitask_config,
+        logger,
+    )
 
     # クリーンアップ
     if use_wandb:
@@ -502,7 +798,10 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--config", type=str, default="configs/pretrain.yaml", help="Path to configuration file"
+        "--config",
+        type=str,
+        default="configs/pretrain.yaml",
+        help="Path to configuration file",
     )
 
     args = parser.parse_args()

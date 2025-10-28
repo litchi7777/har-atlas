@@ -1,7 +1,7 @@
 """
 Supervised Fine-tuning スクリプト
 
-事前学習済みエンコーダーを用いた分類モデルのファインチューニングを実行します。
+事前学習済みエンコーダーを用いたセンサーデータ分類モデルのファインチューニングを実行します。
 """
 
 import argparse
@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -26,10 +26,8 @@ har_dataset_path = project_root / "har-unified-dataset"
 sys.path.insert(0, str(har_dataset_path))
 
 from src.data.augmentations import get_augmentation_pipeline
-from src.data.dataset import FinetuneDataset
 from src.data.sensor_dataset import SensorDataset
 from src.dataset_info import get_dataset_info, select_sensors
-from src.models.model import ClassificationModel
 from src.models.sensor_models import SensorClassificationModel
 from src.utils.common import count_parameters, get_device, set_seed
 from src.utils.config import load_config, validate_config
@@ -203,7 +201,7 @@ def evaluate(
     return metrics
 
 
-def create_sensor_datasets(
+def create_datasets(
     config: Dict[str, Any], logger
 ) -> Tuple[SensorDataset, SensorDataset, int, int, int]:
     """センサーデータセットを作成
@@ -265,36 +263,9 @@ def create_sensor_datasets(
     return train_dataset, val_dataset, num_classes, in_channels, sequence_length
 
 
-def create_image_datasets(
-    config: Dict[str, Any], logger
-) -> Tuple[FinetuneDataset, FinetuneDataset, int]:
-    """画像データセットを作成
-
-    Args:
-        config: 設定辞書
-        logger: ロガー
-
-    Returns:
-        (train_dataset, val_dataset, num_classes)
-    """
-    train_dataset = FinetuneDataset(
-        data_path=config["data"]["train_path"],
-        augmentation_config=config.get("augmentation"),
-    )
-
-    val_dataset = FinetuneDataset(
-        data_path=config["data"]["val_path"],
-        augmentation_config=None,  # 検証時は拡張なし
-    )
-
-    num_classes = len(train_dataset.class_to_idx)
-
-    return train_dataset, val_dataset, num_classes
-
-
 def create_data_loaders(
-    train_dataset,
-    val_dataset,
+    train_dataset: SensorDataset,
+    val_dataset: SensorDataset,
     loader_params: DataLoaderParams,
     logger,
 ) -> Tuple[DataLoader, DataLoader]:
@@ -334,47 +305,29 @@ def create_data_loaders(
 def create_model(
     config: Dict[str, Any],
     num_classes: int,
-    dataset_type: str,
-    in_channels: Optional[int] = None,
-    device: torch.device = torch.device("cuda"),
-    logger=None,
+    in_channels: int,
+    device: torch.device,
+    logger,
 ) -> nn.Module:
     """モデルを作成
 
     Args:
         config: 設定辞書
         num_classes: クラス数
-        dataset_type: データセットタイプ ("sensor" or "image")
-        in_channels: 入力チャネル数（センサーデータの場合）
+        in_channels: 入力チャネル数
         device: デバイス
         logger: ロガー
 
     Returns:
         作成されたモデル
     """
-    if dataset_type == "sensor":
-        if in_channels is None:
-            raise ValueError("in_channels is required for sensor models")
-
-        model = SensorClassificationModel(
-            in_channels=in_channels,
-            num_classes=num_classes,
-            backbone=config["model"].get("backbone", "simple_cnn"),
-            pretrained_path=config["model"].get("pretrained_path"),
-            freeze_backbone=config["model"].get("freeze_backbone", False),
-        ).to(device)
-    else:
-        # 画像モデル
-        model = ClassificationModel(config["model"]).to(device)
-
-        # 事前学習済み重みをロード（指定されている場合）
-        pretrained_path = config["model"].get("pretrained_path")
-        if pretrained_path:
-            try:
-                model.load_pretrained_encoder(pretrained_path, device=device)
-                logger.info(f"Loaded pretrained weights from {pretrained_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load pretrained weights: {e}")
+    model = SensorClassificationModel(
+        in_channels=in_channels,
+        num_classes=num_classes,
+        backbone=config["model"].get("backbone", "simple_cnn"),
+        pretrained_path=config["model"].get("pretrained_path"),
+        freeze_backbone=config["model"].get("freeze_backbone", False),
+    ).to(device)
 
     param_info = count_parameters(model)
     logger.info(
@@ -435,7 +388,7 @@ def run_training_loop(
     val_loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
-    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
     early_stopping: EarlyStopping,
     config: Dict[str, Any],
     device: torch.device,
@@ -545,20 +498,10 @@ def main(args: argparse.Namespace) -> None:
     logger.info(f"Using device: {device}")
 
     # データセットとデータローダーを作成
-    dataset_type = config.get("dataset_type", "image")
-
     try:
-        if dataset_type == "sensor":
-            # センサーデータの場合
-            train_dataset, val_dataset, num_classes, in_channels, sequence_length = (
-                create_sensor_datasets(config, logger)
-            )
-        else:
-            # 画像データの場合
-            train_dataset, val_dataset, num_classes = create_image_datasets(
-                config, logger
-            )
-            in_channels = None
+        train_dataset, val_dataset, num_classes, in_channels, sequence_length = (
+            create_datasets(config, logger)
+        )
 
         # DataLoaderパラメータを作成
         loader_params = DataLoaderParams.from_config(config)
@@ -575,7 +518,7 @@ def main(args: argparse.Namespace) -> None:
         raise
 
     # モデルを作成
-    model = create_model(config, num_classes, dataset_type, in_channels, device, logger)
+    model = create_model(config, num_classes, in_channels, device, logger)
 
     # 損失関数を定義
     criterion = nn.CrossEntropyLoss(

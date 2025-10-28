@@ -149,8 +149,20 @@ def validate_sensor_data_config(sensor_config: Dict[str, Any], mode: str) -> Non
     # バッチローダー使用時は最小限のチェック
     if "batch_loader" in sensor_config:
         batch_loader_config = sensor_config["batch_loader"]
-        if "dataset_patterns" not in batch_loader_config:
-            raise ConfigValidationError("Missing 'dataset_patterns' in batch_loader config")
+
+        # data_root と datasets のチェック（新しい設定方式）
+        if "data_root" in sensor_config and "datasets" in sensor_config:
+            if not sensor_config["datasets"]:
+                raise ConfigValidationError("'datasets' list is empty in sensor_data config")
+        # dataset_patterns のチェック（従来の設定方式）
+        elif "dataset_patterns" in batch_loader_config:
+            if not batch_loader_config["dataset_patterns"]:
+                raise ConfigValidationError("'dataset_patterns' list is empty in batch_loader config")
+        else:
+            raise ConfigValidationError(
+                "Either 'data_root' + 'datasets' or 'dataset_patterns' must be provided in config"
+            )
+
         if "sample_threshold" not in batch_loader_config:
             raise ConfigValidationError("Missing 'sample_threshold' in batch_loader config")
         return  # バッチローダー使用時は他のチェックをスキップ

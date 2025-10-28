@@ -102,6 +102,7 @@ htmlcov/
 coverage.xml
 *.cover
 .hypothesis/
+__test__/
 
 # mypy
 .mypy_cache/

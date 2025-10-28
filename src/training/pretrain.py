@@ -82,18 +82,22 @@ def setup_batch_dataloaders(config, logger, use_multitask, multitask_config):
         logger.info(f"Binary SSL tasks: {binary_tasks}")
         logger.info(f"Augmentations: {aug_names}")
 
-    # 複数データセットパスから読み込み
-    dataset_patterns = batch_loader_config.get("dataset_patterns", [])
+    # データセット設定を取得
+    data_root = sensor_config.get("data_root", "har-unified-dataset/data/processed")
+    datasets = sensor_config.get("datasets", [])
     exclude_patterns = batch_loader_config.get("exclude_patterns", [])
 
-    if not dataset_patterns:
-        raise ValueError("dataset_patterns is empty in batch_loader config")
+    if not datasets:
+        raise ValueError("datasets list is empty in sensor_data config")
 
-    # 各パターンからパスを収集
+    # 各データセットからパスパターンを自動生成して収集
+    # データ構造: {dataset}/{USER}/{Device}/{Sensor}/X.npy
+    # ACCセンサーのみを使用（チャネル数を統一するため）
     all_paths = []
-    for pattern in dataset_patterns:
+    for dataset_name in datasets:
+        pattern = f"{data_root}/{dataset_name}/*/*/ACC/X.npy"
         paths = sorted(glob.glob(pattern))
-        logger.info(f"Pattern: {pattern} -> {len(paths)} files")
+        logger.info(f"Dataset '{dataset_name}' (ACC only): {pattern} -> {len(paths)} files")
         all_paths.extend(paths)
 
     # 除外パターンのフィルタリング

@@ -4,19 +4,28 @@
 dataset_type: "sensor"
 
 sensor_data:
-  dataset_name: "DSADS"
-  data_root: "/mnt/home/processed_data/All_30Hz_W150/npy_data2/DSADS"
-  mode: "multi_device"
-  train_users: [1, 2, 3, 4, 5, 6]
-  val_users: [7]
-  test_users: [8]
+  # データセットの基本設定
+  data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
+  datasets: ["mhealth"]  # 使用するデータセット名
+
+  # バッチローダー設定
+  batch_loader:
+    exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
+    sample_threshold: 50  # 使用しないが、バリデーションのため保持
+    batch_size: 64  # バッチサイズ
+
+  # ユーザー分割設定
+  user_split:
+    test_users: ["1", "2"]  # テスト用ユーザーID
+    val_users: ["3", "4"]   # 検証用ユーザーID
+    # train_users は指定なし（test/val以外の全ユーザー）
 
 # Model
 model:
-  name: "simple_cnn"
-  backbone: "simple_cnn"
-  num_classes: 19
-  pretrained_path: null
+  name: "resnet"
+  backbone: "resnet"
+  num_classes: 6  # NHANESのクラス数（後で自動検出される）
+  pretrained_path: null  # 事前学習済みモデルのパス（nullの場合はランダム初期化）
   freeze_backbone: false
 
 # Data Augmentation

@@ -5,30 +5,58 @@ Supervised Fine-tuning スクリプト
 """
 
 import argparse
+import glob
 import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
+from src.data.augmentations import get_augmentation_pipeline
+from src.data.batch_dataset import InMemoryDataset
+from src.models.sensor_models import SensorClassificationModel
+
 # har-unified-datasetサブモジュールをパスに追加
 har_dataset_path = project_root / "har-unified-dataset"
 sys.path.insert(0, str(har_dataset_path))
 
-from src.data.augmentations import get_augmentation_pipeline
-from src.data.sensor_dataset import SensorDataset
-from src.dataset_info import get_dataset_info, select_sensors
-from src.models.sensor_models import SensorClassificationModel
+# データセットメタデータ（dataset_infoから抜粋）
+DATASETS = {
+    "DSADS": {
+        "n_classes": 19,
+        "labels": {
+            0: 'Sitting', 1: 'Standing', 2: 'Lying(Back)', 3: 'Lying(Right)',
+            4: 'StairsUp', 5: 'StairsDown', 6: 'Standing(Elevator, still)',
+            7: 'Moving(elevator)', 8: 'Walking(parking)',
+            9: 'Walking(Treadmill, Flat)', 10: 'Walking(Treadmill, Slope)',
+            11: 'Running(treadmill)', 12: 'Exercising(Stepper)',
+            13: 'Exercising(Cross trainer)', 14: 'Cycling(Exercise bike, Vertical)',
+            15: 'Cycling(Exercise bike, Horizontal)', 16: 'Rowing',
+            17: 'Jumping', 18: 'PlayingBasketball'
+        },
+    },
+    "MHEALTH": {
+        "n_classes": 12,
+        "labels": {
+            -1: 'Undefined',
+            0: 'Standing', 1: 'Sitting', 2: 'LyingDown', 3: 'Walking',
+            4: 'StairsUp', 5: 'WaistBendsForward', 6: 'FrontalElevationArms',
+            7: 'KneesBending', 8: 'Cycling', 9: 'Jogging',
+            10: 'Running', 11: 'JumpFrontBack'
+        },
+    },
+}
 from src.utils.common import count_parameters, get_device, set_seed
 from src.utils.config import load_config, validate_config
 from src.utils.logger import setup_logger
@@ -50,11 +78,28 @@ except ImportError:
 
 # 定数
 LOG_INTERVAL = 10
+DEFAULT_DATA_ROOT = "har-unified-dataset/data/processed"
 DEFAULT_BATCH_SIZE = 64
 DEFAULT_NUM_WORKERS = 4
 DEFAULT_EVAL_INTERVAL = 1
 DEFAULT_EARLY_STOPPING_PATIENCE = 10
 DEFAULT_EARLY_STOPPING_MIN_DELTA = 0.001
+
+
+@dataclass
+class DataLoaderConfig:
+    """データローダー設定を保持するデータクラス"""
+
+    data_root: str
+    datasets: List[str]
+    exclude_patterns: List[str]
+    sample_threshold: int
+    train_num_samples: int
+    val_num_samples: int
+    test_num_samples: int
+    batch_size: int
+    test_users: List[str]
+    val_users: List[str]
 
 
 @dataclass
@@ -201,105 +246,198 @@ def evaluate(
     return metrics
 
 
-def create_datasets(
+def collect_labeled_data_paths(
+    data_root: str,
+    datasets: List[str],
+    exclude_patterns: List[str],
+    test_users: List[str],
+    val_users: List[str],
+    logger,
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, str]], Dict[str, int]]:
+    """ラベル付きデータのパスを収集してtrain/val/testに分割
+
+    Args:
+        data_root: データルートディレクトリ
+        datasets: データセット名のリスト
+        exclude_patterns: 除外パターン
+        test_users: テスト用ユーザーID
+        val_users: 検証用ユーザーID
+        logger: ロガー
+
+    Returns:
+        (train_paths, val_paths, test_paths, dataset_labels):
+            - train/val/test_paths: [(X.npy path, y.npy path), ...]
+            - dataset_labels: {dataset_name: {label_id: label_name}}
+    """
+    train_paths = []
+    val_paths = []
+    test_paths = []
+    dataset_labels = {}
+
+    for dataset_name in datasets:
+        dataset_name_lower = dataset_name.lower()
+        dataset_name_upper = dataset_name.upper()
+
+        # データセット情報からラベルを取得
+        if dataset_name_upper in DATASETS:
+            dataset_labels[dataset_name_upper] = DATASETS[dataset_name_upper]["labels"]
+        else:
+            logger.warning(f"Dataset {dataset_name_upper} not found in DATASETS metadata")
+
+        # パターン: data_root/dataset/USER*/SENSOR*/ACC/X.npy
+        pattern = f"{data_root}/{dataset_name_lower}/*/*/ACC/X.npy"
+        x_paths = sorted(glob.glob(pattern))
+
+        # 除外パターンを適用
+        for exclude in exclude_patterns:
+            x_paths = [p for p in x_paths if exclude not in p]
+
+        # 各X.npyに対応するY.npyを探す
+        for x_path in x_paths:
+            y_path = x_path.replace("/X.npy", "/Y.npy")
+            if not Path(y_path).exists():
+                continue
+
+            # ユーザーIDを抽出（例: USER00001 -> 1）
+            user_match = Path(x_path).parts
+            user_dir = [p for p in user_match if p.startswith("USER")]
+            if not user_dir:
+                continue
+
+            user_id = user_dir[0].replace("USER", "").lstrip("0") or "0"
+
+            # train/val/test に分割
+            if user_id in test_users:
+                test_paths.append((x_path, y_path))
+            elif user_id in val_users:
+                val_paths.append((x_path, y_path))
+            else:
+                train_paths.append((x_path, y_path))
+
+        logger.info(
+            f"Dataset '{dataset_name}' (ACC only): "
+            f"{data_root}/{dataset_name_lower}/*/*/ACC/X.npy -> "
+            f"{len([p for p in x_paths if Path(p.replace('/X.npy', '/Y.npy')).exists()])} files"
+        )
+
+    logger.info(f"Train: {len(train_paths)} files")
+    logger.info(f"Val: {len(val_paths)} files")
+    logger.info(f"Test: {len(test_paths)} files")
+
+    return train_paths, val_paths, test_paths, dataset_labels
+
+
+def get_num_classes_from_labels(dataset_labels: Dict[str, Dict[int, str]]) -> int:
+    """ラベル辞書からクラス数を計算
+
+    Args:
+        dataset_labels: {dataset_name: {label_id: label_name}}
+
+    Returns:
+        クラス数（負のラベルは除外）
+    """
+    all_labels = set()
+    for labels in dataset_labels.values():
+        all_labels.update([k for k in labels.keys() if k >= 0])
+    return len(all_labels)
+
+
+def get_input_shape(dataset: InMemoryDataset) -> Tuple[int, int]:
+    """データセットから入力形状を取得
+
+    Args:
+        dataset: データセット
+
+    Returns:
+        (channels, sequence_length)
+    """
+    sample_x, _ = dataset[0]
+    in_channels = sample_x.shape[0]
+    sequence_length = sample_x.shape[1]
+    return in_channels, sequence_length
+
+
+def setup_batch_dataloaders(
     config: Dict[str, Any], logger
-) -> Tuple[SensorDataset, SensorDataset, int, int, int]:
-    """センサーデータセットを作成
+) -> Tuple[DataLoader, DataLoader, DataLoader, int, int, int]:
+    """バッチデータローダーのセットアップ
 
     Args:
         config: 設定辞書
         logger: ロガー
 
     Returns:
-        (train_dataset, val_dataset, num_classes, in_channels, sequence_length)
+        (train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length)
     """
     sensor_config = config["sensor_data"]
-    dataset_name = sensor_config["dataset_name"]
-    data_root = sensor_config["data_root"]
-    mode = sensor_config["mode"]
+    batch_loader_config = sensor_config["batch_loader"]
+    user_split = sensor_config["user_split"]
 
-    # データセット情報を取得
-    dataset_info = get_dataset_info(dataset_name, data_root)
-    num_classes = dataset_info["n_classes"]
+    logger.info("Using in-memory data loader")
 
-    # センサーを選択
-    sensors = select_sensors(
-        dataset_name, data_root, mode, sensor_config.get("specific_sensors")
+    # データパスを収集してtrain/val/testに分割
+    train_paths, val_paths, test_paths, dataset_labels = collect_labeled_data_paths(
+        sensor_config.get("data_root", DEFAULT_DATA_ROOT),
+        sensor_config.get("datasets", []),
+        batch_loader_config.get("exclude_patterns", []),
+        user_split.get("test_users", []),
+        user_split.get("val_users", []),
+        logger,
     )
 
-    logger.info(f"Dataset: {dataset_name}")
-    logger.info(f"Mode: {mode}")
-    logger.info(f"Sensors: {sensors}")
-    logger.info(f"Classes: {num_classes}")
+    # クラス数を計算
+    num_classes = get_num_classes_from_labels(dataset_labels)
+    logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Dataset labels: {dataset_labels}")
 
-    # データ拡張
-    train_transform = get_augmentation_pipeline(
-        config.get("augmentation", {}).get("mode", "light")
-    )
+    # データセットを作成（全データをメモリに読み込む）
+    logger.info("Loading data into memory...")
+    train_dataset = InMemoryDataset(train_paths, filter_negative_labels=True)
+    val_dataset = InMemoryDataset(val_paths, filter_negative_labels=True)
+    test_dataset = InMemoryDataset(test_paths, filter_negative_labels=True)
 
-    # データセット作成
-    train_dataset = SensorDataset(
-        data_path=data_root,
-        sensor_locations=sensors,
-        user_ids=sensor_config["train_users"],
-        mode="train",
-        transform=train_transform,
-    )
+    logger.info(f"Train samples: {len(train_dataset)}")
+    logger.info(f"Val samples: {len(val_dataset)}")
+    logger.info(f"Test samples: {len(test_dataset)}")
 
-    val_dataset = SensorDataset(
-        data_path=data_root,
-        sensor_locations=sensors,
-        user_ids=sensor_config["val_users"],
-        mode="val",
-        transform=None,
-    )
-
-    # 入力チャンネル数を取得
-    in_channels = train_dataset.get_num_channels()
-    sequence_length = train_dataset.get_sequence_length()
-
-    logger.info(f"Input shape: ({in_channels}, {sequence_length})")
-
-    return train_dataset, val_dataset, num_classes, in_channels, sequence_length
-
-
-def create_data_loaders(
-    train_dataset: SensorDataset,
-    val_dataset: SensorDataset,
-    loader_params: DataLoaderParams,
-    logger,
-) -> Tuple[DataLoader, DataLoader]:
-    """データローダーを作成
-
-    Args:
-        train_dataset: トレーニングデータセット
-        val_dataset: 検証データセット
-        loader_params: DataLoaderパラメータ
-        logger: ロガー
-
-    Returns:
-        (train_loader, val_loader)
-    """
+    # DataLoaderを作成（通常のシャッフル）
+    batch_size = batch_loader_config.get("batch_size", 64)
     train_loader = DataLoader(
         train_dataset,
-        batch_size=loader_params.batch_size,
+        batch_size=batch_size,
         shuffle=True,
-        num_workers=loader_params.num_workers,
-        pin_memory=loader_params.pin_memory,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=False,
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=loader_params.batch_size,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=loader_params.num_workers,
-        pin_memory=loader_params.pin_memory,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=False,
     )
 
-    logger.info(f"Train dataset: {len(train_dataset)} samples")
-    logger.info(f"Validation dataset: {len(val_dataset)} samples")
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=False,
+    )
 
-    return train_loader, val_loader
+    # 入力形状を取得
+    in_channels, sequence_length = get_input_shape(train_dataset)
+
+    logger.info(f"Input shape: ({in_channels}, {sequence_length})")
+    logger.info(f"Training batches per epoch: {len(train_loader)}")
+    logger.info(f"Validation batches: {len(val_loader)}")
+    logger.info(f"Test batches: {len(test_loader)}")
+
+    return train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length
 
 
 def create_model(
@@ -497,24 +635,16 @@ def main(args: argparse.Namespace) -> None:
     device = get_device(config["device"])
     logger.info(f"Using device: {device}")
 
-    # データセットとデータローダーを作成
+    # データローダーを作成
     try:
-        train_dataset, val_dataset, num_classes, in_channels, sequence_length = (
-            create_datasets(config, logger)
-        )
-
-        # DataLoaderパラメータを作成
-        loader_params = DataLoaderParams.from_config(config)
-
-        # DataLoaderを作成
-        train_loader, val_loader = create_data_loaders(
-            train_dataset, val_dataset, loader_params, logger
+        train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length = (
+            setup_batch_dataloaders(config, logger)
         )
 
         logger.info(f"Number of classes: {num_classes}")
 
     except Exception as e:
-        logger.error(f"Failed to create dataset: {e}")
+        logger.error(f"Failed to create dataloaders: {e}")
         raise
 
     # モデルを作成

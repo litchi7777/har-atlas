@@ -6,12 +6,12 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-  datasets: ["dsads", "mhealth", "nhanes", "openpack"]  # 使用するデータセット名
+  datasets: ["nhanes"]  # 使用するデータセット名
 
   # バッチローダー設定
   batch_loader:
     exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
-    sample_threshold: 50  # 最小サンプル数（1ファイルあたり）
+    sample_threshold: 1000  # 最小サンプル数（1ファイルあたり）
     batch_size: 4  # 1バッチに含める被験者（ファイル）数
     train_num_samples: 1000  # エポックあたりのサンプル数
     val_num_samples: 100

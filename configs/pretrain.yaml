@@ -36,6 +36,10 @@ multitask:
   apply_prob: 0.5  # binary_*タスクの適用確率
   mask_ratio: 0.15  # masking_*タスクのマスク比率
 
+# Data Augmentation
+augmentation:
+  mode: "mtl"  # light, medium, heavy, mtl
+
 # Training
 training:
   epochs: 100

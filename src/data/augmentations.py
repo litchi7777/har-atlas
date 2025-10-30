@@ -2,14 +2,18 @@
 時系列センサーデータ用のデータ拡張
 
 Human Activity Recognition用の各種拡張手法を提供します。
+PyTorchベースのGPU対応拡張を実装。
 """
 
 import numpy as np
-from typing import Optional
+import torch
+import torch.nn as nn
+from typing import Optional, Union, List
+import math
 
 
 class Jittering:
-    """ランダムノイズを追加"""
+    """ランダムノイズを追加（PyTorch対応）"""
 
     def __init__(self, sigma: float = 0.05):
         """
@@ -18,20 +22,24 @@ class Jittering:
         """
         self.sigma = sigma
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
-            x: (channels, time_steps)
+            x: (channels, time_steps) - numpy or torch tensor
 
         Returns:
             拡張されたデータ
         """
-        noise = np.random.normal(0, self.sigma, x.shape)
-        return x + noise
+        if isinstance(x, torch.Tensor):
+            noise = torch.randn_like(x) * self.sigma
+            return x + noise
+        else:
+            noise = np.random.normal(0, self.sigma, x.shape)
+            return x + noise
 
 
 class Scaling:
-    """振幅をランダムにスケーリング"""
+    """振幅をランダムにスケーリング（PyTorch対応）"""
 
     def __init__(self, sigma: float = 0.1):
         """
@@ -40,7 +48,7 @@ class Scaling:
         """
         self.sigma = sigma
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
             x: (channels, time_steps)
@@ -48,13 +56,18 @@ class Scaling:
         Returns:
             拡張されたデータ
         """
-        # チャンネルごとに異なるスケーリング係数を生成
-        scale = np.random.normal(1.0, self.sigma, size=(x.shape[0], 1))
-        return x * scale
+        if isinstance(x, torch.Tensor):
+            # チャンネルごとに異なるスケーリング係数を生成
+            scale = torch.randn(x.shape[0], 1, device=x.device) * self.sigma + 1.0
+            return x * scale
+        else:
+            # チャンネルごとに異なるスケーリング係数を生成
+            scale = np.random.normal(1.0, self.sigma, size=(x.shape[0], 1))
+            return x * scale
 
 
 class Rotation:
-    """3軸センサーデータの回転"""
+    """3軸センサーデータの回転（PyTorch GPU対応）"""
 
     def __init__(self, max_angle: float = 15.0):
         """
@@ -63,7 +76,7 @@ class Rotation:
         """
         self.max_angle = max_angle
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
             x: (channels, time_steps) - channels must be multiple of 3
@@ -71,20 +84,72 @@ class Rotation:
         Returns:
             拡張されたデータ
         """
+        if isinstance(x, torch.Tensor):
+            return self._rotation_torch(x)
+        else:
+            return self._rotation_numpy(x)
+
+    def _rotation_torch(self, x: torch.Tensor) -> torch.Tensor:
+        """PyTorchベースの回転（GPU対応）"""
         if x.shape[0] % 3 != 0:
-            # 3軸でない場合はそのまま返す
             return x
 
-        # Copy data
-        x_aug = x.copy()
-
-        # 各3軸ごとに回転
+        x_aug = x.clone()
         num_sensors = x.shape[0] // 3
+
         for i in range(num_sensors):
-            # Extract 3-axis data
             start_idx = i * 3
             end_idx = start_idx + 3
             xyz = x[start_idx:end_idx, :]  # (3, time_steps)
+
+            # Random rotation angles (radians)
+            angle_x = (torch.rand(1, device=x.device) * 2 - 1) * self.max_angle * math.pi / 180
+            angle_y = (torch.rand(1, device=x.device) * 2 - 1) * self.max_angle * math.pi / 180
+            angle_z = (torch.rand(1, device=x.device) * 2 - 1) * self.max_angle * math.pi / 180
+
+            # Rotation matrices
+            cos_x, sin_x = torch.cos(angle_x), torch.sin(angle_x)
+            cos_y, sin_y = torch.cos(angle_y), torch.sin(angle_y)
+            cos_z, sin_z = torch.cos(angle_z), torch.sin(angle_z)
+
+            Rx = torch.tensor([
+                [1, 0, 0],
+                [0, cos_x, -sin_x],
+                [0, sin_x, cos_x]
+            ], device=x.device, dtype=x.dtype).squeeze()
+
+            Ry = torch.tensor([
+                [cos_y, 0, sin_y],
+                [0, 1, 0],
+                [-sin_y, 0, cos_y]
+            ], device=x.device, dtype=x.dtype).squeeze()
+
+            Rz = torch.tensor([
+                [cos_z, -sin_z, 0],
+                [sin_z, cos_z, 0],
+                [0, 0, 1]
+            ], device=x.device, dtype=x.dtype).squeeze()
+
+            # Combined rotation
+            R = torch.mm(torch.mm(Rz, Ry), Rx)
+
+            # Apply rotation: (3, 3) @ (3, time_steps) = (3, time_steps)
+            x_aug[start_idx:end_idx, :] = torch.mm(R, xyz)
+
+        return x_aug
+
+    def _rotation_numpy(self, x: np.ndarray) -> np.ndarray:
+        """NumPyベースの回転（後方互換性）"""
+        if x.shape[0] % 3 != 0:
+            return x
+
+        x_aug = x.copy()
+        num_sensors = x.shape[0] // 3
+
+        for i in range(num_sensors):
+            start_idx = i * 3
+            end_idx = start_idx + 3
+            xyz = x[start_idx:end_idx, :]
 
             # Random rotation angles
             angle_x = np.random.uniform(-self.max_angle, self.max_angle) * np.pi / 180
@@ -92,44 +157,32 @@ class Rotation:
             angle_z = np.random.uniform(-self.max_angle, self.max_angle) * np.pi / 180
 
             # Rotation matrices
-            Rx = np.array(
-                [
-                    [1, 0, 0],
-                    [0, np.cos(angle_x), -np.sin(angle_x)],
-                    [0, np.sin(angle_x), np.cos(angle_x)],
-                ]
-            )
+            Rx = np.array([
+                [1, 0, 0],
+                [0, np.cos(angle_x), -np.sin(angle_x)],
+                [0, np.sin(angle_x), np.cos(angle_x)]
+            ])
 
-            Ry = np.array(
-                [
-                    [np.cos(angle_y), 0, np.sin(angle_y)],
-                    [0, 1, 0],
-                    [-np.sin(angle_y), 0, np.cos(angle_y)],
-                ]
-            )
+            Ry = np.array([
+                [np.cos(angle_y), 0, np.sin(angle_y)],
+                [0, 1, 0],
+                [-np.sin(angle_y), 0, np.cos(angle_y)]
+            ])
 
-            Rz = np.array(
-                [
-                    [np.cos(angle_z), -np.sin(angle_z), 0],
-                    [np.sin(angle_z), np.cos(angle_z), 0],
-                    [0, 0, 1],
-                ]
-            )
+            Rz = np.array([
+                [np.cos(angle_z), -np.sin(angle_z), 0],
+                [np.sin(angle_z), np.cos(angle_z), 0],
+                [0, 0, 1]
+            ])
 
-            # Combined rotation
             R = Rz @ Ry @ Rx
-
-            # Apply rotation: (3, 3) @ (3, time_steps) = (3, time_steps)
-            xyz_rotated = R @ xyz
-
-            # Update
-            x_aug[start_idx:end_idx, :] = xyz_rotated
+            x_aug[start_idx:end_idx, :] = R @ xyz
 
         return x_aug
 
 
 class TimeWarping:
-    """時間軸の変形（伸縮）"""
+    """時間軸の変形（伸縮）（NumPy専用、SSLタスク用）"""
 
     def __init__(self, sigma: float = 0.2, knot: int = 4):
         """
@@ -143,7 +196,7 @@ class TimeWarping:
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """
         Args:
-            x: (channels, time_steps)
+            x: (channels, time_steps) - NumPy配列のみサポート
 
         Returns:
             拡張されたデータ
@@ -233,7 +286,7 @@ class Reverse:
 
 
 class MagnitudeWarping:
-    """振幅の変形"""
+    """振幅の変形（PyTorch対応）"""
 
     def __init__(self, sigma: float = 0.2, knot: int = 4):
         """
@@ -244,7 +297,7 @@ class MagnitudeWarping:
         self.sigma = sigma
         self.knot = knot
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
             x: (channels, time_steps)
@@ -252,6 +305,33 @@ class MagnitudeWarping:
         Returns:
             拡張されたデータ
         """
+        if isinstance(x, torch.Tensor):
+            return self._warp_torch(x)
+        else:
+            return self._warp_numpy(x)
+
+    def _warp_torch(self, x: torch.Tensor) -> torch.Tensor:
+        """PyTorchベースの振幅変形"""
+        time_steps = x.shape[1]
+
+        # ランダムな変形曲線を線形補間で生成
+        warp = torch.randn(self.knot + 2, device=x.device) * self.sigma + 1.0
+        warp_indices = torch.linspace(0, time_steps - 1, self.knot + 2, device=x.device)
+
+        # 線形補間
+        t = torch.arange(time_steps, dtype=torch.float32, device=x.device)
+        warp_curve = torch.nn.functional.interpolate(
+            warp.unsqueeze(0).unsqueeze(0),
+            size=time_steps,
+            mode="linear",
+            align_corners=True
+        ).squeeze()
+
+        # 各チャンネルに適用
+        return x * warp_curve.unsqueeze(0)
+
+    def _warp_numpy(self, x: np.ndarray) -> np.ndarray:
+        """NumPyベースの振幅変形"""
         time_steps = x.shape[1]
 
         # ランダムな変形曲線を生成
@@ -260,20 +340,17 @@ class MagnitudeWarping:
 
         # 線形補間
         from scipy.interpolate import interp1d
-
         warper = interp1d(warp_steps, warp, kind="cubic")
 
         # 時間軸全体に拡張
         warp_curve = warper(np.arange(time_steps))
 
         # 各チャンネルに適用
-        x_warped = x * warp_curve[np.newaxis, :]
-
-        return x_warped
+        return x * warp_curve[np.newaxis, :]
 
 
 class RandomChoice:
-    """複数の拡張手法からランダムに選択"""
+    """複数の拡張手法からランダムに選択（PyTorch対応）"""
 
     def __init__(self, transforms: list, p: Optional[list] = None):
         """
@@ -284,7 +361,7 @@ class RandomChoice:
         self.transforms = transforms
         self.p = p
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
             x: (channels, time_steps)
@@ -293,11 +370,17 @@ class RandomChoice:
             拡張されたデータ
         """
         transform = np.random.choice(self.transforms, p=self.p)
-        return transform(x)
+        # NumPy専用の拡張(TimeWarping, Permutation)がtorch.Tensorを受け取った場合はCPU変換
+        if isinstance(x, torch.Tensor) and isinstance(transform, (TimeWarping, Permutation)):
+            x_np = x.cpu().numpy()
+            y_np = transform(x_np)
+            return torch.from_numpy(y_np).to(x.device)
+        else:
+            return transform(x)
 
 
 class Compose:
-    """複数の拡張手法を順次適用"""
+    """複数の拡張手法を順次適用（PyTorch対応）"""
 
     def __init__(self, transforms: list):
         """
@@ -306,7 +389,7 @@ class Compose:
         """
         self.transforms = transforms
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
             x: (channels, time_steps)
@@ -320,7 +403,7 @@ class Compose:
 
 
 class RandomApply:
-    """指定された確率で拡張を適用"""
+    """指定された確率で拡張を適用（PyTorch対応）"""
 
     def __init__(self, transform, p: float = 0.5):
         """
@@ -331,7 +414,7 @@ class RandomApply:
         self.transform = transform
         self.p = p
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
             x: (channels, time_steps)
@@ -344,12 +427,13 @@ class RandomApply:
         return x
 
 
-def get_augmentation_pipeline(mode: str = "light"):
+def get_augmentation_pipeline(mode: str = "light", max_epochs: int = 100):
     """
-    データ拡張パイプラインを取得
+    データ拡張パイプラインを取得（改良版）
 
     Args:
-        mode: 'light', 'medium', 'heavy'
+        mode: 'light', 'medium', 'heavy', 'mtl'
+        max_epochs: 最大エポック数（動的拡張用）
 
     Returns:
         拡張パイプライン
@@ -360,6 +444,7 @@ def get_augmentation_pipeline(mode: str = "light"):
             [
                 RandomApply(Jittering(sigma=0.05), p=0.5),
                 RandomApply(Scaling(sigma=0.1), p=0.5),
+                RandomApply(Amplitude(sigma=0.1), p=0.3),
             ]
         )
 
@@ -369,7 +454,9 @@ def get_augmentation_pipeline(mode: str = "light"):
             [
                 RandomApply(Jittering(sigma=0.05), p=0.5),
                 RandomApply(Scaling(sigma=0.1), p=0.5),
-                RandomApply(Rotation(max_angle=15.0), p=0.3),
+                RandomApply(Rotation(max_angle=15.0), p=0.4),
+                RandomApply(Amplitude(sigma=0.15), p=0.4),
+                RandomApply(PhaseShift(max_shift_ratio=0.1), p=0.3),
             ]
         )
 
@@ -379,7 +466,8 @@ def get_augmentation_pipeline(mode: str = "light"):
             [
                 RandomApply(Jittering(sigma=0.1), p=0.8),
                 RandomApply(Scaling(sigma=0.2), p=0.8),
-                RandomApply(Rotation(max_angle=30.0), p=0.5),
+                RandomApply(Rotation(max_angle=30.0), p=0.6),
+                RandomApply(Amplitude(sigma=0.2), p=0.6),
                 RandomChoice(
                     [
                         TimeWarping(sigma=0.2, knot=4),
@@ -388,6 +476,27 @@ def get_augmentation_pipeline(mode: str = "light"):
                     ],
                     p=[0.33, 0.33, 0.34],
                 ),
+                RandomApply(PhaseShift(max_shift_ratio=0.15), p=0.4),
+            ]
+        )
+
+    elif mode == "mtl":
+        # マルチタスク学習用の強力な拡張（PyTorch GPU対応）
+        return Compose(
+            [
+                # 基本拡張
+                RandomApply(Jittering(sigma=0.12), p=0.85),
+                RandomApply(Scaling(sigma=0.25), p=0.85),
+                RandomApply(Rotation(max_angle=35.0), p=0.7),
+
+                # 高度な拡張
+                RandomApply(Amplitude(sigma=0.25), p=0.7),
+                RandomApply(ChannelMixing(alpha=0.5), p=0.5),
+                RandomApply(ChannelArithmetic(alpha=0.3), p=0.4),
+
+                # 時間軸拡張（PyTorch対応のみ）
+                RandomApply(MagnitudeWarping(sigma=0.25, knot=4), p=0.6),
+                RandomApply(PhaseShift(max_shift_ratio=0.2), p=0.5),
             ]
         )
 
@@ -500,3 +609,201 @@ class TimeChannelMasking:
         masked_x[masked_channels, :] = 0.0  # チャンネルマスク
 
         return masked_x, (masked_timesteps, masked_channels)
+
+
+# ============================================================================
+# 高度な拡張手法（リファレンスコードより）
+# ============================================================================
+
+
+class Amplitude:
+    """振幅変調（PyTorch対応）"""
+
+    def __init__(self, sigma: float = 0.2):
+        """
+        Args:
+            sigma: 変調の強さ
+        """
+        self.sigma = sigma
+
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            拡張されたデータ
+        """
+        if isinstance(x, torch.Tensor):
+            alpha = 1.0 + (torch.rand(1, device=x.device) * 2 - 1) * self.sigma
+            return x * alpha
+        else:
+            alpha = 1.0 + (np.random.random() * 2 - 1) * self.sigma
+            return x * alpha
+
+
+class ChannelMixing:
+    """チャンネル間のミキシング（PyTorch対応）"""
+
+    def __init__(self, alpha: float = 0.5):
+        """
+        Args:
+            alpha: ミキシングの強さ
+        """
+        self.alpha = alpha
+
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            拡張されたデータ
+        """
+        if isinstance(x, torch.Tensor):
+            n_channels = x.shape[0]
+            if n_channels < 2:
+                return x
+
+            # ランダムに2つのチャンネルを選択
+            idx1, idx2 = torch.randperm(n_channels, device=x.device)[:2]
+
+            # ミキシング
+            mixed = x.clone()
+            mixed[idx1] = self.alpha * x[idx1] + (1 - self.alpha) * x[idx2]
+            mixed[idx2] = (1 - self.alpha) * x[idx1] + self.alpha * x[idx2]
+
+            return mixed
+        else:
+            n_channels = x.shape[0]
+            if n_channels < 2:
+                return x
+
+            # ランダムに2つのチャンネルを選択
+            idx1, idx2 = np.random.choice(n_channels, 2, replace=False)
+
+            # ミキシング
+            mixed = x.copy()
+            mixed[idx1] = self.alpha * x[idx1] + (1 - self.alpha) * x[idx2]
+            mixed[idx2] = (1 - self.alpha) * x[idx1] + self.alpha * x[idx2]
+
+            return mixed
+
+
+class ChannelArithmetic:
+    """チャンネル間の算術演算（加算/減算）（PyTorch対応）"""
+
+    def __init__(self, alpha: float = 0.3):
+        """
+        Args:
+            alpha: 演算の強さ
+        """
+        self.alpha = alpha
+
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            拡張されたデータ
+        """
+        if isinstance(x, torch.Tensor):
+            n_channels = x.shape[0]
+            if n_channels < 2:
+                return x
+
+            # ランダムに2つのチャンネルを選択
+            idx1, idx2 = torch.randperm(n_channels, device=x.device)[:2]
+
+            # 加算または減算をランダムに選択
+            result = x.clone()
+            if torch.rand(1, device=x.device) > 0.5:
+                result[idx1] = x[idx1] + self.alpha * x[idx2]
+            else:
+                result[idx1] = x[idx1] - self.alpha * x[idx2]
+
+            return result
+        else:
+            n_channels = x.shape[0]
+            if n_channels < 2:
+                return x
+
+            # ランダムに2つのチャンネルを選択
+            idx1, idx2 = np.random.choice(n_channels, 2, replace=False)
+
+            # 加算または減算をランダムに選択
+            result = x.copy()
+            if np.random.random() > 0.5:
+                result[idx1] = x[idx1] + self.alpha * x[idx2]
+            else:
+                result[idx1] = x[idx1] - self.alpha * x[idx2]
+
+            return result
+
+
+class PhaseShift:
+    """位相シフト（時間軸の巡回シフト）（PyTorch対応）"""
+
+    def __init__(self, max_shift_ratio: float = 0.2):
+        """
+        Args:
+            max_shift_ratio: 最大シフト量（時間ステップ数に対する割合）
+        """
+        self.max_shift_ratio = max_shift_ratio
+
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            拡張されたデータ
+        """
+        time_steps = x.shape[1]
+        max_shift = int(time_steps * self.max_shift_ratio)
+
+        if isinstance(x, torch.Tensor):
+            shift = torch.randint(-max_shift, max_shift + 1, (1,), device=x.device).item()
+            return torch.roll(x, shifts=shift, dims=1)
+        else:
+            shift = np.random.randint(-max_shift, max_shift + 1)
+            return np.roll(x, shift=shift, axis=1)
+
+
+class DynamicAugmentation:
+    """動的拡張 - エポックに応じて拡張強度を調整"""
+
+    def __init__(self, transform, max_epochs: int = 100, initial_prob: float = 0.3, final_prob: float = 0.8):
+        """
+        Args:
+            transform: 基本拡張手法
+            max_epochs: 最大エポック数
+            initial_prob: 初期適用確率
+            final_prob: 最終適用確率
+        """
+        self.transform = transform
+        self.max_epochs = max_epochs
+        self.initial_prob = initial_prob
+        self.final_prob = final_prob
+        self.current_epoch = 0
+
+    def set_epoch(self, epoch: int):
+        """現在のエポックを設定"""
+        self.current_epoch = epoch
+
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            拡張されたデータ
+        """
+        # エポックに応じた適用確率を計算
+        progress = min(1.0, self.current_epoch / self.max_epochs)
+        current_prob = self.initial_prob + (self.final_prob - self.initial_prob) * progress
+
+        if np.random.random() < current_prob:
+            return self.transform(x)
+        return x

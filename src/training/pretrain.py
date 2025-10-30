@@ -29,6 +29,7 @@ from src.data.augmentations import (
     ChannelMasking,
     TimeMasking,
     TimeChannelMasking,
+    get_augmentation_pipeline,
 )
 from src.data.batch_dataset import MultiTaskSubjectWiseLoader, SubjectWiseLoader
 from src.losses import IntegratedSSLLoss
@@ -109,7 +110,7 @@ def get_ssl_tasks_from_config(config: Dict[str, Any]) -> List[str]:
 def create_augmentation_transforms(
     ssl_tasks: List[str], config: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """SSL taskに応じた拡張変換を作成
+    """SSL taskに応じた拡張変換を作成（通常の拡張パイプラインも含む）
 
     Args:
         ssl_tasks: SSLタスクのリスト
@@ -119,8 +120,19 @@ def create_augmentation_transforms(
         拡張変換の辞書
         - binary_*タスク用: {'permute': Transform, 'reverse': Transform, ...}
         - masking_*タスク用: {'channel': Transform, 'time': Transform, ...}
+        - 'base_augmentation': 通常のデータ拡張パイプライン
     """
     transforms = {}
+
+    # 通常のデータ拡張パイプラインを追加
+    augmentation_config = config.get("augmentation", {})
+    aug_mode = augmentation_config.get("mode", "heavy")  # デフォルトはheavy
+    training_config = config.get("training", {})
+    max_epochs = training_config.get("epochs", 100)
+
+    transforms["base_augmentation"] = get_augmentation_pipeline(
+        mode=aug_mode, max_epochs=max_epochs
+    )
 
     # Binary拡張タスクの処理
     binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
@@ -380,7 +392,7 @@ def apply_augmentations_batch(
     Args:
         x: 入力データ (batch_size, channels, time_steps)
         ssl_tasks: SSLタスクのリスト
-        transforms: 拡張辞書
+        transforms: 拡張辞書（'base_augmentation'キーに通常の拡張パイプラインを含む）
         apply_prob: binary_*タスクの適用確率
         device: デバイス
 
@@ -393,6 +405,25 @@ def apply_augmentations_batch(
     batch_size = x.shape[0]
     original_x = x.clone()
     labels_dict = {}
+
+    # 通常のデータ拡張を最初に適用（PyTorch対応）
+    if "base_augmentation" in transforms:
+        base_aug = transforms["base_augmentation"]
+        # GPU上で直接適用（PyTorch対応拡張なので）
+        if x.device.type == 'cpu':
+            # CPUの場合、各サンプルに適用
+            augmented_batch = []
+            for sample in x:
+                augmented_sample = base_aug(sample)
+                augmented_batch.append(augmented_sample)
+            x = torch.stack(augmented_batch)
+        else:
+            # GPUの場合、GPU上で直接適用
+            augmented_batch = []
+            for sample in x:
+                augmented_sample = base_aug(sample)
+                augmented_batch.append(augmented_sample)
+            x = torch.stack(augmented_batch)
 
     # Binary拡張タスク
     binary_tasks = [t for t in ssl_tasks if t.startswith("binary_")]

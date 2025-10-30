@@ -74,8 +74,11 @@ seed: 42
 
 # Grid Search
 grid_search:
-  training:
-    learning_rate: [0.001]
+  multitask:
+    ssl_tasks:
+      - ["binary_permute", "binary_reverse", "binary_timewarp"]
+      - ["binary_permute", "binary_reverse", "binary_timewarp", "masking_time_channel"]
+      - ["masking_time_channel"]
 
 settings:
   stop_on_error: false

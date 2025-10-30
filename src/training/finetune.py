@@ -107,18 +107,21 @@ class ExperimentDirs:
     """実験ディレクトリ構造を保持するデータクラス"""
 
     root: Path
+    checkpoint: Path
     log: Path
 
     @classmethod
     def create(cls, base_dir: Path, run_id: str) -> "ExperimentDirs":
         """実験ディレクトリを作成"""
         root = base_dir / "finetune" / f"run_{run_id}"
+        checkpoint = root / "checkpoints"
         log = root / "logs"
 
         root.mkdir(parents=True, exist_ok=True)
+        checkpoint.mkdir(exist_ok=True)
         log.mkdir(exist_ok=True)
 
-        return cls(root=root, log=log)
+        return cls(root=root, checkpoint=checkpoint, log=log)
 
 
 @dataclass
@@ -588,6 +591,17 @@ def run_training_loop(
             if current_metric > best_metric:
                 best_metric = current_metric
                 logger.info(f"New best accuracy: {best_metric:.4f}")
+
+                # ベストモデルを保存
+                best_model_path = experiment_dirs.checkpoint / "best_model.pth"
+                torch.save({
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "best_metric": best_metric,
+                    "val_metrics": val_metrics,
+                }, best_model_path)
+                logger.info(f"Best model saved to {best_model_path}")
 
             # Early stoppingチェック
             if early_stopping(current_metric):

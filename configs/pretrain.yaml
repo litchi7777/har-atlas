@@ -76,3 +76,5 @@ settings:
   stop_on_error: false
   save_summary: true
   summary_path: "logs/pretrain_experiments_summary.json"
+  parallel: false  # GPU並列実行（pretrainは長時間なのでデフォルトfalse）
+  max_workers: null  # null=利用可能なGPU全て、数値=最大並列数

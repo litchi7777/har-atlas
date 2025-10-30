@@ -10,12 +10,49 @@ import copy
 from pathlib import Path
 from datetime import datetime
 from itertools import product
+import subprocess
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import List, Dict, Any
 
 import yaml
 
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
+
+
+def get_available_gpus(memory_threshold: int = 10000) -> List[int]:
+    """
+    利用可能なGPUのリストを取得
+
+    Args:
+        memory_threshold: 空きメモリの閾値（MB）
+
+    Returns:
+        利用可能なGPUのインデックスリスト
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        available_gpus = []
+        for line in result.stdout.strip().split("\n"):
+            gpu_id, memory_free = line.split(",")
+            gpu_id = int(gpu_id.strip())
+            memory_free = int(memory_free.strip())
+
+            if memory_free >= memory_threshold:
+                available_gpus.append(gpu_id)
+
+        return available_gpus
+
+    except Exception as e:
+        print(f"Warning: Could not detect GPUs: {e}")
+        return []
 
 
 def load_yaml(config_path):
@@ -109,7 +146,7 @@ def generate_grid_experiments(base_config, grid_params):
     return experiments
 
 
-def run_experiment(exp_name, config, script_path, experiment_dir):
+def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
     """
     Run a single experiment
 
@@ -118,12 +155,14 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
         config: Experiment configuration
         script_path: Path to training script
         experiment_dir: Directory to save experiment configs and results
+        gpu_id: GPU ID to use (None for default)
 
     Returns:
         Dictionary with experiment results
     """
+    gpu_str = f" (GPU {gpu_id})" if gpu_id is not None else ""
     print(f"\n{'='*80}")
-    print(f"Running experiment: {exp_name}")
+    print(f"Running experiment: {exp_name}{gpu_str}")
     print(f"{'='*80}\n")
 
     # Create experiment directory
@@ -140,14 +179,21 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
     if "wandb" in config and config["wandb"].get("enabled", False):
         config["wandb"]["name"] = exp_name
 
+    # GPU指定があれば、configのdeviceを上書き
+    if gpu_id is not None:
+        config["device"] = f"cuda:{gpu_id}"
+
     # Save experiment config
     config_path = os.path.join(exp_dir, "config.yaml")
     save_yaml(config, config_path)
 
     # Run training script
-    import subprocess
-
     start_time = datetime.now()
+
+    # 環境変数でGPUを指定（二重保険）
+    env = os.environ.copy()
+    if gpu_id is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
     try:
         result = subprocess.run(
@@ -155,6 +201,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
             capture_output=True,
             text=True,
             check=True,
+            env=env,
         )
 
         end_time = datetime.now()
@@ -184,6 +231,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir):
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
         "config_path": config_path,
+        "gpu_id": gpu_id,
         "error": error,
     }
 
@@ -221,20 +269,75 @@ def main(args):
     save_yaml(plan, plan_path)
     print(f"Experiment plan saved to: {plan_path}\n")
 
-    # Run experiments
-    results = []
+    # GPU並列実行の設定
+    parallel = settings.get("parallel", False)
+    max_workers = settings.get("max_workers", None)  # Noneの場合は利用可能なGPU数
     stop_on_error = settings.get("stop_on_error", False)
 
-    for i, exp in enumerate(experiments, 1):
-        print(f"\nExperiment {i}/{len(experiments)}")
+    # Run experiments
+    results = []
 
-        result = run_experiment(exp["name"], exp["config"], args.script, experiment_dir)
-        results.append(result)
+    if parallel:
+        # 並列実行モード
+        available_gpus = get_available_gpus()
 
-        # Stop if experiment failed and stop_on_error is True
-        if result["status"] == "failed" and stop_on_error:
-            print(f"\nStopping experiments due to failure (stop_on_error=True)")
-            break
+        if not available_gpus:
+            print("Warning: No available GPUs detected, falling back to sequential execution")
+            parallel = False
+        else:
+            if max_workers is None:
+                max_workers = len(available_gpus)
+            else:
+                max_workers = min(max_workers, len(available_gpus))
+
+            print(f"Parallel execution enabled:")
+            print(f"  Available GPUs: {available_gpus}")
+            print(f"  Max workers: {max_workers}\n")
+
+    if parallel:
+        # 並列実行
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # GPU割り当てを循環させる
+            futures = {}
+            for i, exp in enumerate(experiments):
+                gpu_id = available_gpus[i % len(available_gpus)]
+                future = executor.submit(
+                    run_experiment,
+                    exp["name"],
+                    exp["config"],
+                    args.script,
+                    experiment_dir,
+                    gpu_id
+                )
+                futures[future] = (i + 1, exp["name"], gpu_id)
+
+            # 完了した実験から結果を収集
+            for future in as_completed(futures):
+                exp_num, exp_name, gpu_id = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    print(f"\n[{exp_num}/{len(experiments)}] Experiment '{exp_name}' on GPU {gpu_id}: {result['status']}")
+                except Exception as e:
+                    print(f"\n[{exp_num}/{len(experiments)}] Experiment '{exp_name}' raised an exception: {e}")
+                    results.append({
+                        "name": exp_name,
+                        "status": "failed",
+                        "error": str(e),
+                        "gpu_id": gpu_id,
+                    })
+    else:
+        # 順次実行（既存の動作）
+        for i, exp in enumerate(experiments, 1):
+            print(f"\nExperiment {i}/{len(experiments)}")
+
+            result = run_experiment(exp["name"], exp["config"], args.script, experiment_dir)
+            results.append(result)
+
+            # Stop if experiment failed and stop_on_error is True
+            if result["status"] == "failed" and stop_on_error:
+                print(f"\nStopping experiments due to failure (stop_on_error=True)")
+                break
 
     # Save results summary
     summary = {

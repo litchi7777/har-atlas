@@ -51,7 +51,7 @@ training:
   warmup_epochs: 10
 
 # Hardware
-device: "cuda:3"
+device: "cuda:0"
 mixed_precision: true
 
 # Checkpointing

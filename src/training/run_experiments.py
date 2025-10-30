@@ -146,7 +146,7 @@ def generate_grid_experiments(base_config, grid_params):
     return experiments
 
 
-def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
+def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, run_id=None):
     """
     Run a single experiment
 
@@ -156,6 +156,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
         script_path: Path to training script
         experiment_dir: Directory to save experiment configs and results
         gpu_id: GPU ID to use (None for default)
+        run_id: Grid search run ID (shared across all experiments in the same grid search)
 
     Returns:
         Dictionary with experiment results
@@ -175,9 +176,14 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
     if "logging" in config:
         config["logging"]["log_dir"] = os.path.join(exp_dir, "logs")
 
-    # Update W&B run name if enabled
+    # Update W&B run name and group if enabled
     if "wandb" in config and config["wandb"].get("enabled", False):
         config["wandb"]["name"] = exp_name
+
+        # グリッドサーチのrun_idをgroupとして設定
+        if run_id:
+            config["wandb"]["group"] = run_id
+            config["wandb"]["tags"] = config["wandb"].get("tags", []) + [run_id]
 
     # Save experiment config
     config_path = os.path.join(exp_dir, "config.yaml")
@@ -275,6 +281,7 @@ def main(args):
     # scriptパスから実験タイプ（pretrain/finetune）を判定
     script_name = Path(args.script).stem  # "pretrain" or "finetune"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"{script_name}_run_{timestamp}"  # Grid search全体を識別するID
     experiment_dir = os.path.join("experiments", script_name, f"run_{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
 
@@ -322,7 +329,8 @@ def main(args):
                     exp["config"],
                     args.script,
                     experiment_dir,
-                    gpu_id
+                    gpu_id,
+                    run_id  # Grid search run IDを渡す
                 )
                 futures[future] = (i + 1, exp["name"], gpu_id)
 
@@ -346,7 +354,7 @@ def main(args):
         for i, exp in enumerate(experiments, 1):
             print(f"\nExperiment {i}/{len(experiments)}")
 
-            result = run_experiment(exp["name"], exp["config"], args.script, experiment_dir)
+            result = run_experiment(exp["name"], exp["config"], args.script, experiment_dir, run_id=run_id)
             results.append(result)
 
             # Stop if experiment failed and stop_on_error is True

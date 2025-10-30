@@ -182,6 +182,7 @@ def init_wandb(config: Dict[str, Any], model: nn.Module) -> bool:
             project=wandb_config.get("project", "har-foundation"),
             entity=wandb_config.get("entity"),
             name=wandb_config.get("name"),
+            group=wandb_config.get("group"),  # Grid search run IDでグループ化
             tags=wandb_config.get("tags", []),
             notes=wandb_config.get("notes"),
             config=config,

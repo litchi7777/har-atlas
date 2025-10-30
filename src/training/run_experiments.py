@@ -389,17 +389,24 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        required=True,
+        default="configs/pretrain.yaml",
         help="Path to experiment configuration file "
-        "(e.g., configs/pretrain.yaml or configs/finetune.yaml)",
+        "(default: configs/pretrain.yaml)",
     )
     parser.add_argument(
         "--script",
         type=str,
-        required=True,
-        help="Path to training script "
-        "(e.g., src/training/pretrain.py or src/training/finetune.py)",
+        default=None,
+        help="Path to training script. If not specified, auto-detect from config filename "
+        "(e.g., pretrain.yaml -> src/training/pretrain.py)",
     )
 
     args = parser.parse_args()
+
+    # scriptが指定されていない場合、configから自動推測
+    if args.script is None:
+        config_name = Path(args.config).stem  # "pretrain" or "finetune"
+        args.script = f"src/training/{config_name}.py"
+        print(f"Auto-detected script: {args.script}")
+
     main(args)

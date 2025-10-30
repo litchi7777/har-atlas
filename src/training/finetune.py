@@ -754,6 +754,8 @@ def main(args: argparse.Namespace) -> None:
     scheduler = get_scheduler(
         optimizer=optimizer,
         scheduler_name=config["training"].get("scheduler", "step"),
+        total_epochs=config["training"]["epochs"],
+        warmup_epochs=config["training"].get("warmup_epochs", 0),
         step_size=config["training"].get("step_size", 20),
         gamma=config["training"].get("gamma", 0.1),
         T_max=config["training"]["epochs"],

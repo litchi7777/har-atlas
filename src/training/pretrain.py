@@ -962,6 +962,8 @@ def main(args: argparse.Namespace) -> None:
     scheduler = get_scheduler(
         optimizer=optimizer,
         scheduler_name=config["training"].get("scheduler", "cosine"),
+        total_epochs=config["training"]["epochs"],
+        warmup_epochs=config["training"].get("warmup_epochs", 0),
         T_max=config["training"]["epochs"],
     )
 

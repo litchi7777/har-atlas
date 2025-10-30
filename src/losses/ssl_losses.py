@@ -216,7 +216,13 @@ class IntegratedSSLLoss(nn.Module):
         """
         super().__init__()
         self.ssl_tasks = ssl_tasks
-        self.task_weights = task_weights or {task: 1.0 for task in ssl_tasks}
+
+        # task_weightsが提供された場合でも、すべてのssl_tasksに重みが設定されているか確認
+        if task_weights is None:
+            self.task_weights = {task: 1.0 for task in ssl_tasks}
+        else:
+            # 提供された重みを使用し、不足分はデフォルト値(1.0)で補完
+            self.task_weights = {task: task_weights.get(task, 1.0) for task in ssl_tasks}
 
         # タスクタイプに応じた損失関数
         self.ce_criterion = nn.CrossEntropyLoss()

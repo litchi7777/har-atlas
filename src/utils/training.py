@@ -84,6 +84,9 @@ def get_scheduler(
         optimizer: オプティマイザー
         scheduler_name: スケジューラー名 ('step', 'cosine', 'plateau', 'exponential')
         **kwargs: スケジューラー固有のパラメータ
+            - warmup_epochs: Warmupエポック数（オプション、デフォルト=0）
+            - total_epochs: 全エポック数（warmup使用時に必要）
+            - warmup_start_factor: Warmup開始時の学習率倍率（デフォルト=0.1）
 
     Returns:
         スケジューラーインスタンス（Noneの場合はスケジューリングなし）
@@ -95,19 +98,24 @@ def get_scheduler(
         return None
 
     scheduler_name = scheduler_name.lower()
+    warmup_epochs = kwargs.get("warmup_epochs", 0)
+    total_epochs = kwargs.get("total_epochs", 100)
 
+    # メインスケジューラーを作成
     if scheduler_name == "step":
-        return optim.lr_scheduler.StepLR(
+        main_scheduler = optim.lr_scheduler.StepLR(
             optimizer, step_size=kwargs.get("step_size", 30), gamma=kwargs.get("gamma", 0.1)
         )
 
     elif scheduler_name == "cosine":
-        return optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=kwargs.get("T_max", 100), eta_min=kwargs.get("eta_min", 0)
+        # Warmupがある場合はT_maxを調整
+        T_max = total_epochs - warmup_epochs if warmup_epochs > 0 else kwargs.get("T_max", total_epochs)
+        main_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=T_max, eta_min=kwargs.get("eta_min", 0)
         )
 
     elif scheduler_name == "plateau":
-        return optim.lr_scheduler.ReduceLROnPlateau(
+        main_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode=kwargs.get("mode", "min"),
             factor=kwargs.get("factor", 0.1),
@@ -115,13 +123,35 @@ def get_scheduler(
         )
 
     elif scheduler_name == "exponential":
-        return optim.lr_scheduler.ExponentialLR(optimizer, gamma=kwargs.get("gamma", 0.95))
+        main_scheduler = optim.lr_scheduler.ExponentialLR(
+            optimizer, gamma=kwargs.get("gamma", 0.95)
+        )
 
     else:
         raise ValueError(
             f"Unsupported scheduler: {scheduler_name}. "
             f"Supported: step, cosine, plateau, exponential"
         )
+
+    # Warmupスケジューラーを追加（plateau以外）
+    if warmup_epochs > 0 and scheduler_name != "plateau":
+        warmup_scheduler = optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=kwargs.get("warmup_start_factor", 0.1),  # 最初は10%から開始
+            total_iters=warmup_epochs,
+        )
+        scheduler = optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[warmup_epochs],
+        )
+        logger.info(
+            f"Scheduler created: {scheduler_name} with {warmup_epochs} warmup epochs "
+            f"(start_factor={kwargs.get('warmup_start_factor', 0.1)})"
+        )
+        return scheduler
+    else:
+        return main_scheduler
 
 
 def init_wandb(config: Dict[str, Any], model: nn.Module) -> bool:

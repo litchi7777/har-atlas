@@ -777,16 +777,35 @@ class SensorClassificationModel(nn.Module):
         else:
             state_dict = checkpoint
 
-        # encoder.* の重みのみを抽出
+        # backbone.* の重みを抽出（IntegratedSSLModelの場合）
         encoder_state = {}
         for key, value in state_dict.items():
-            if key.startswith("encoder."):
+            if key.startswith("backbone."):
+                # backbone.feature_extractor.* -> feature_extractor.*
+                new_key = key.replace("backbone.", "")
+                encoder_state[new_key] = value
+            elif key.startswith("encoder."):
+                # encoder.* -> * (旧形式との互換性)
                 new_key = key.replace("encoder.", "")
                 encoder_state[new_key] = value
 
+        if not encoder_state:
+            raise ValueError(
+                f"No compatible weights found in {path}. "
+                f"Expected keys starting with 'backbone.' or 'encoder.', "
+                f"but found: {list(state_dict.keys())[:5]}..."
+            )
+
         # Load into encoder
-        self.encoder.load_state_dict(encoder_state, strict=False)
-        print(f"Loaded pretrained weights from {path}")
+        missing_keys, unexpected_keys = self.encoder.load_state_dict(encoder_state, strict=False)
+
+        if missing_keys:
+            print(f"Warning: Missing keys in encoder: {missing_keys[:5]}...")
+        if unexpected_keys:
+            print(f"Warning: Unexpected keys in checkpoint: {unexpected_keys[:5]}...")
+
+        print(f"✓ Loaded pretrained weights from {path}")
+        print(f"  Loaded {len(encoder_state)} parameter tensors")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

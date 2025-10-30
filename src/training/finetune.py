@@ -524,6 +524,7 @@ def run_training_loop(
     model: nn.Module,
     train_loader: DataLoader,
     val_loader: DataLoader,
+    test_loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
@@ -531,14 +532,16 @@ def run_training_loop(
     config: Dict[str, Any],
     device: torch.device,
     use_wandb: bool,
+    experiment_dirs: "ExperimentDirs",
     logger,
-) -> float:
+) -> Dict[str, float]:
     """トレーニングループを実行
 
     Args:
         model: モデル
         train_loader: トレーニングデータローダー
         val_loader: 検証データローダー
+        test_loader: テストデータローダー
         criterion: 損失関数
         optimizer: オプティマイザー
         scheduler: スケジューラー
@@ -546,10 +549,11 @@ def run_training_loop(
         config: 設定辞書
         device: デバイス
         use_wandb: W&Bを使用するか
+        experiment_dirs: 実験ディレクトリ
         logger: ロガー
 
     Returns:
-        ベスト精度
+        結果辞書 {'best_val_accuracy': float, 'test_accuracy': float, ...}
     """
     best_metric = 0.0
     num_epochs = config["training"]["epochs"]
@@ -601,7 +605,49 @@ def run_training_loop(
             current_lr = optimizer.param_groups[0]["lr"]
             logger.info(f"Learning rate: {current_lr:.6f}")
 
-    return best_metric
+    # トレーニング完了後、ベストモデルをロードしてテストセットで評価
+    logger.info("=" * 80)
+    logger.info("Loading best model and evaluating on test set...")
+    logger.info("=" * 80)
+
+    best_model_path = experiment_dirs.checkpoint / "best_model.pth"
+    if best_model_path.exists():
+        checkpoint = torch.load(best_model_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        logger.info(f"Loaded best model from {best_model_path}")
+    else:
+        logger.warning("Best model not found, using current model state")
+
+    # テストセットで最終評価
+    test_metrics = evaluate(model, test_loader, criterion, device)
+
+    logger.info(f"Test Loss: {test_metrics['loss']:.4f}")
+    logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
+    logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
+    logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
+    logger.info(f"Test F1: {test_metrics['f1']:.4f}")
+
+    # W&Bにログ
+    if use_wandb:
+        wandb.log({
+            "test/loss": test_metrics["loss"],
+            "test/accuracy": test_metrics["accuracy"],
+            "test/precision": test_metrics["precision"],
+            "test/recall": test_metrics["recall"],
+            "test/f1": test_metrics["f1"],
+        })
+
+    # 結果を辞書にまとめて返す
+    results = {
+        "best_val_accuracy": best_metric,
+        "test_loss": test_metrics["loss"],
+        "test_accuracy": test_metrics["accuracy"],
+        "test_precision": test_metrics["precision"],
+        "test_recall": test_metrics["recall"],
+        "test_f1": test_metrics["f1"],
+    }
+
+    return results
 
 
 def main(args: argparse.Namespace) -> None:
@@ -687,10 +733,11 @@ def main(args: argparse.Namespace) -> None:
     )
 
     # トレーニングループを実行
-    best_metric = run_training_loop(
+    results = run_training_loop(
         model,
         train_loader,
         val_loader,
+        test_loader,
         criterion,
         optimizer,
         scheduler,
@@ -698,13 +745,22 @@ def main(args: argparse.Namespace) -> None:
         config,
         device,
         use_wandb,
+        experiment_dirs,
         logger,
     )
+
+    # 結果をJSONファイルに保存
+    results_file = experiment_dirs.root / "results.json"
+    import json
+    with open(results_file, "w") as f:
+        json.dump(results, f, indent=2)
+    logger.info(f"Results saved to {results_file}")
 
     # 完了
     logger.info("=" * 80)
     logger.info("Fine-tuning completed!")
-    logger.info(f"Best accuracy: {best_metric:.4f}")
+    logger.info(f"Best validation accuracy: {results['best_val_accuracy']:.4f}")
+    logger.info(f"Test accuracy: {results['test_accuracy']:.4f}")
     logger.info("=" * 80)
 
     # クリーンアップ

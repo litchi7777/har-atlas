@@ -87,8 +87,12 @@ seed: 42
 
 # Grid Search
 grid_search:
-  training:
-    learning_rate: [0.0001]
+  model:
+    pretrained_path:
+      - null  # ランダム初期化（ベースライン）
+      - "experiments/pretrain/run_20251029_171342/checkpoints/best_model.pth"  # epoch 40
+      - "experiments/pretrain/run_20251029_171512/checkpoints/best_model.pth"  # epoch 100
+      - "experiments/pretrain/run_20251029_171644/checkpoints/best_model.pth"  # epoch 50
 
 settings:
   stop_on_error: false

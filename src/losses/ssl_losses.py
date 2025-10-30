@@ -201,6 +201,11 @@ class IntegratedSSLLoss(nn.Module):
     統合型SSL損失 - 複数のSSLタスクの損失を管理
 
     calc_ssl_lossの方針を参考に、タスクタイプに応じた損失関数を自動選択
+
+    サポートするタスクタイプ:
+    - binary_*: 変換予測タスク（CrossEntropy損失）
+    - masking_*: マスク再構成タスク（MSE損失）
+    - contrastive_*: 対照学習タスク（NT-Xent損失）
     """
 
     def __init__(self, ssl_tasks: List[str], task_weights: Optional[Dict[str, float]] = None):
@@ -215,17 +220,20 @@ class IntegratedSSLLoss(nn.Module):
 
         # タスクタイプに応じた損失関数
         self.ce_criterion = nn.CrossEntropyLoss()
+        self.mse_criterion = nn.MSELoss()
         self.ntxent_criterion = NTXentLoss(temperature=0.5)
 
     def _get_loss_fn(self, task: str):
         """タスクタイプに応じた損失関数を返す（プレフィックスで判定）"""
         if task.startswith("binary_"):
             return self.ce_criterion  # CrossEntropy（2クラス分類）
+        elif task.startswith("masking_"):
+            return self.mse_criterion  # MSE（再構成）
         elif task.startswith("contrastive_"):
             return self.ntxent_criterion  # NT-Xent（対照学習）
         else:
             raise ValueError(
-                f"Unknown task type: {task}. Use prefix like 'binary_' or 'contrastive_'"
+                f"Unknown task type: {task}. Use prefix like 'binary_', 'masking_', or 'contrastive_'"
             )
 
     def forward(
@@ -253,6 +261,11 @@ class IntegratedSSLLoss(nn.Module):
             if task.startswith("binary_"):
                 # Binary分類: CrossEntropy
                 label = label.long()
+                loss = loss_fn(pred, label)
+            elif task.startswith("masking_"):
+                # マスク再構成: MSE
+                # pred: (batch, channels, time_steps) 再構成された時系列
+                # label: (batch, channels, time_steps) 元の時系列（またはマスク情報を含む）
                 loss = loss_fn(pred, label)
             elif task.startswith("contrastive_"):
                 # 対照学習: NT-Xent

@@ -67,13 +67,14 @@ class MultiTaskSubjectWiseLoader(Dataset):
     """
     マルチタスク学習用の被験者ごとデータローダー
 
-    データ拡張検出タスクのラベルを生成。
+    データは元のまま返し、拡張はトレーニングループ側で行う（高速化のため）
     """
 
     def __init__(
         self,
         paths: List[str],
         sample_threshold: int,
+        ssl_tasks: List[str],
         specific_transforms: Optional[Dict[str, Any]] = None,
         apply_prob: float = 0.5,
     ):
@@ -81,8 +82,9 @@ class MultiTaskSubjectWiseLoader(Dataset):
         Args:
             paths: .npy ファイルのパスリスト（複数データセット可）
             sample_threshold: 最小サンプル数の閾値
-            specific_transforms: 拡張辞書 {'permute': Transform, 'reverse': Transform, 'timewarp': Transform}
-            apply_prob: 各拡張を適用する確率
+            ssl_tasks: SSLタスクのリスト（例: ["binary_permute", "masking_channel"]）
+            specific_transforms: 拡張辞書（使用しない、互換性のため残す）
+            apply_prob: 各拡張を適用する確率（使用しない、互換性のため残す）
         """
         # サンプル数が閾値以上のパスのみをフィルタリング
         self.paths = []
@@ -95,22 +97,17 @@ class MultiTaskSubjectWiseLoader(Dataset):
             raise ValueError(f"No valid paths found with sample_threshold={sample_threshold}")
 
         self.sample_threshold = sample_threshold
-        self.specific_transforms = specific_transforms or {}
-        self.apply_prob = apply_prob
-        self.aug_names = ["permute", "reverse", "timewarp"]
+        self.ssl_tasks = ssl_tasks
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> torch.Tensor:
         """
-        指定されたインデックスのファイルから、sample_threshold分のデータを取得し、
-        マルチタスク用のラベルを生成
+        指定されたインデックスのファイルから、sample_threshold分のデータを取得
 
         Args:
             index: パスリストのインデックス
 
         Returns:
-            (data, labels):
-                - data: [sample_threshold, channels, time_steps]
-                - labels: [sample_threshold, 3] (3つのバイナリタスクのラベル)
+            data: [sample_threshold, channels, time_steps]
         """
         path = self.paths[index]
         X = np.load(path, mmap_mode="r")
@@ -123,30 +120,7 @@ class MultiTaskSubjectWiseLoader(Dataset):
         # NaN を 0 に置き換え
         data = np.nan_to_num(data, nan=0.0)
 
-        # バッチ全体に対してラベルを生成
-        labels = []
-        for aug_name in self.aug_names:
-            # ランダムに適用するか決定
-            apply = np.random.random() < self.apply_prob
-            labels.append(1 if apply else 0)
-
-            # 拡張を適用
-            if apply and aug_name in self.specific_transforms:
-                # バッチ全体に適用
-                data = np.array(
-                    [
-                        self.specific_transforms[aug_name](sample).astype(np.float32)
-                        for sample in data
-                    ]
-                )
-
-        # ラベルをサンプル数分繰り返す
-        batch_labels = np.tile(labels, (self.sample_threshold, 1))
-
-        return (
-            torch.tensor(data, dtype=torch.float32),
-            torch.tensor(batch_labels, dtype=torch.float32),
-        )
+        return torch.tensor(data, dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.paths)

@@ -599,14 +599,28 @@ class IntegratedSSLModel(nn.Module):
 
     Integrated_SSLModelの方針を参考に、よりクリーンに実装
     各SSLタスクに対して専用のヘッドを持ち、タスク名で切り替え
+
+    サポートするタスクタイプ:
+    - binary_*: 変換予測（binary_permute, binary_reverse, binary_timewarp等）
+    - masking_*: マスク再構成（masking_channel, masking_time, masking_time_channel等）
+    - contrastive_*: 対照学習（contrastive_simclr等）
     """
 
-    def __init__(self, backbone: nn.Module, ssl_tasks: List[str], hidden_dim: int = 256):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        ssl_tasks: List[str],
+        hidden_dim: int = 256,
+        n_channels: int = 3,
+        sequence_length: int = 150,
+    ):
         """
         Args:
             backbone: 共有バックボーン（ResNet等）
-            ssl_tasks: SSLタスクのリスト (例: ["permute", "reverse", "timewarp"])
+            ssl_tasks: SSLタスクのリスト
             hidden_dim: 中間層の次元数
+            n_channels: 入力チャネル数（マスク再構成用）
+            sequence_length: 入力系列長（マスク再構成用）
         """
         super().__init__()
 
@@ -614,6 +628,8 @@ class IntegratedSSLModel(nn.Module):
         self.input_dim = backbone.output_dim
         self.ssl_tasks = ssl_tasks
         self.hidden_dim = hidden_dim
+        self.n_channels = n_channels
+        self.sequence_length = sequence_length
 
         # タスクごとのヘッドを作成
         self.task_heads = nn.ModuleDict()
@@ -637,10 +653,29 @@ class IntegratedSSLModel(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Linear(self.hidden_dim, 128),  # 128次元埋め込み
             )
+        elif task.startswith("masking_"):
+            # マスク再構成タスク（masking_channel, masking_time, masking_time_channel等）
+            # デコーダー: 特徴マップから元の時系列を再構成
+            return self._create_reconstruction_head()
         else:
             raise ValueError(
-                f"Unknown task type: {task}. Use prefix like 'binary_' or 'contrastive_'"
+                f"Unknown task type: {task}. Use prefix like 'binary_', 'contrastive_', or 'masking_'"
             )
+
+    def _create_reconstruction_head(self) -> nn.Module:
+        """マスク再構成用のデコーダーヘッドを作成"""
+        # バックボーンの出力: (batch, 512, 1) または (batch, 512)
+        # 目標: (batch, n_channels, sequence_length) に復元
+
+        return nn.Sequential(
+            # 1. 特徴次元を拡張
+            nn.Linear(self.input_dim, self.hidden_dim * 4),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            # 2. さらに拡張
+            nn.Linear(self.hidden_dim * 4, self.n_channels * self.sequence_length),
+            # 3. 出力はreshapeで (batch, n_channels, sequence_length) にする
+        )
 
     def forward(self, x: torch.Tensor, task: str) -> torch.Tensor:
         """
@@ -654,13 +689,29 @@ class IntegratedSSLModel(nn.Module):
         # バックボーンで特徴抽出
         features = self.backbone(x)
 
-        # Global average pooling
-        if len(features.shape) > 2:
-            features = torch.mean(features, dim=-1)
+        # タスクタイプに応じて処理を分岐
+        if task.startswith("masking_"):
+            # マスク再構成タスク: 時系列を復元
+            if len(features.shape) > 2:
+                # Global average pooling
+                features = torch.mean(features, dim=-1)
 
-        # タスクヘッドを適用
-        output = self.task_heads[task](features)
-        return output
+            # デコーダーで復元
+            output = self.task_heads[task](features)  # (batch, n_channels * sequence_length)
+
+            # Reshape to (batch, n_channels, sequence_length)
+            batch_size = output.size(0)
+            output = output.view(batch_size, self.n_channels, self.sequence_length)
+
+            return output
+        else:
+            # Binary分類 or 対照学習: Global pooling後に分類/埋め込み
+            if len(features.shape) > 2:
+                features = torch.mean(features, dim=-1)
+
+            # タスクヘッドを適用
+            output = self.task_heads[task](features)
+            return output
 
 
 # 後方互換性のためのエイリアス

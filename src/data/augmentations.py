@@ -393,3 +393,110 @@ def get_augmentation_pipeline(mode: str = "light"):
 
     else:
         raise ValueError(f"Unknown augmentation mode: {mode}")
+
+
+class ChannelMasking:
+    """チャンネルマスキング - ランダムにチャンネルをマスク"""
+
+    def __init__(self, mask_ratio: float = 0.15):
+        """
+        Args:
+            mask_ratio: マスクするチャンネルの割合
+        """
+        self.mask_ratio = mask_ratio
+
+    def __call__(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            (masked_x, mask): マスクされたデータとマスク情報
+                - masked_x: マスクされたデータ (channels, time_steps)
+                - mask: マスクされたチャンネルのインデックス配列
+        """
+        n_channels = x.shape[0]
+        n_masked = max(1, int(n_channels * self.mask_ratio))
+
+        # ランダムにマスクするチャンネルを選択
+        masked_channels = np.random.choice(n_channels, n_masked, replace=False)
+
+        # マスクを作成
+        masked_x = x.copy()
+        masked_x[masked_channels, :] = 0.0
+
+        return masked_x, masked_channels
+
+
+class TimeMasking:
+    """時間マスキング - ランダムに時間ステップをマスク"""
+
+    def __init__(self, mask_ratio: float = 0.15):
+        """
+        Args:
+            mask_ratio: マスクする時間ステップの割合
+        """
+        self.mask_ratio = mask_ratio
+
+    def __call__(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            (masked_x, mask): マスクされたデータとマスク情報
+                - masked_x: マスクされたデータ (channels, time_steps)
+                - mask: マスクされた時間ステップのインデックス配列
+        """
+        time_steps = x.shape[1]
+        n_masked = max(1, int(time_steps * self.mask_ratio))
+
+        # ランダムにマスクする時間ステップを選択
+        masked_timesteps = np.random.choice(time_steps, n_masked, replace=False)
+
+        # マスクを作成
+        masked_x = x.copy()
+        masked_x[:, masked_timesteps] = 0.0
+
+        return masked_x, masked_timesteps
+
+
+class TimeChannelMasking:
+    """時間-チャンネル同時マスキング"""
+
+    def __init__(self, time_mask_ratio: float = 0.15, channel_mask_ratio: float = 0.15):
+        """
+        Args:
+            time_mask_ratio: マスクする時間ステップの割合
+            channel_mask_ratio: マスクするチャンネルの割合
+        """
+        self.time_mask_ratio = time_mask_ratio
+        self.channel_mask_ratio = channel_mask_ratio
+
+    def __call__(
+        self, x: np.ndarray
+    ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+        """
+        Args:
+            x: (channels, time_steps)
+
+        Returns:
+            (masked_x, (time_mask, channel_mask)): マスクされたデータとマスク情報
+        """
+        n_channels = x.shape[0]
+        time_steps = x.shape[1]
+
+        # 時間マスク
+        n_time_masked = max(1, int(time_steps * self.time_mask_ratio))
+        masked_timesteps = np.random.choice(time_steps, n_time_masked, replace=False)
+
+        # チャンネルマスク
+        n_channel_masked = max(1, int(n_channels * self.channel_mask_ratio))
+        masked_channels = np.random.choice(n_channels, n_channel_masked, replace=False)
+
+        # マスクを作成
+        masked_x = x.copy()
+        masked_x[:, masked_timesteps] = 0.0  # 時間マスク
+        masked_x[masked_channels, :] = 0.0  # チャンネルマスク
+
+        return masked_x, (masked_timesteps, masked_channels)

@@ -22,7 +22,14 @@ from tqdm import tqdm
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-from src.data.augmentations import Permutation, Reverse, TimeWarping
+from src.data.augmentations import (
+    Permutation,
+    Reverse,
+    TimeWarping,
+    ChannelMasking,
+    TimeMasking,
+    TimeChannelMasking,
+)
 from src.data.batch_dataset import MultiTaskSubjectWiseLoader, SubjectWiseLoader
 from src.losses import IntegratedSSLLoss
 from src.models.sensor_models import IntegratedSSLModel, Resnet
@@ -100,20 +107,25 @@ def get_ssl_tasks_from_config(config: Dict[str, Any]) -> List[str]:
 
 
 def create_augmentation_transforms(
-    ssl_tasks: List[str],
+    ssl_tasks: List[str], config: Dict[str, Any]
 ) -> Dict[str, Any]:
     """SSL taskに応じた拡張変換を作成
 
     Args:
         ssl_tasks: SSLタスクのリスト
+        config: 設定辞書（マスク比率等の取得用）
 
     Returns:
-        拡張変換の辞書 {'permute': Transform, 'reverse': Transform, ...}
+        拡張変換の辞書
+        - binary_*タスク用: {'permute': Transform, 'reverse': Transform, ...}
+        - masking_*タスク用: {'channel': Transform, 'time': Transform, ...}
     """
+    transforms = {}
+
+    # Binary拡張タスクの処理
     binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
     aug_names = [task.replace("binary_", "") for task in binary_tasks]
 
-    transforms = {}
     for aug_name in aug_names:
         if aug_name == "permute":
             transforms["permute"] = Permutation(n_segments=DEFAULT_N_SEGMENTS)
@@ -122,6 +134,24 @@ def create_augmentation_transforms(
         elif aug_name == "timewarp":
             transforms["timewarp"] = TimeWarping(
                 sigma=DEFAULT_TIMEWARP_SIGMA, knot=DEFAULT_TIMEWARP_KNOT
+            )
+
+    # Maskingタスクの処理
+    masking_tasks = [task for task in ssl_tasks if task.startswith("masking_")]
+    mask_types = [task.replace("masking_", "") for task in masking_tasks]
+
+    # マスク比率を設定から取得
+    multitask_config = config.get("multitask", {})
+    mask_ratio = multitask_config.get("mask_ratio", 0.15)
+
+    for mask_type in mask_types:
+        if mask_type == "channel":
+            transforms["channel"] = ChannelMasking(mask_ratio=mask_ratio)
+        elif mask_type == "time":
+            transforms["time"] = TimeMasking(mask_ratio=mask_ratio)
+        elif mask_type == "time_channel":
+            transforms["time_channel"] = TimeChannelMasking(
+                time_mask_ratio=mask_ratio, channel_mask_ratio=mask_ratio
             )
 
     return transforms
@@ -179,6 +209,7 @@ def create_data_loaders(
     paths: List[str],
     config: DataLoaderConfig,
     use_multitask: bool,
+    ssl_tasks: List[str],
     specific_transforms: Optional[Dict[str, Any]] = None,
     apply_prob: float = DEFAULT_APPLY_PROB,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
@@ -188,6 +219,7 @@ def create_data_loaders(
         paths: データファイルパスのリスト
         config: データローダー設定
         use_multitask: マルチタスク学習を使用するか
+        ssl_tasks: SSLタスクのリスト
         specific_transforms: 拡張変換の辞書
         apply_prob: 拡張適用確率
 
@@ -199,6 +231,7 @@ def create_data_loaders(
         dataset = MultiTaskSubjectWiseLoader(
             paths,
             sample_threshold=config.sample_threshold,
+            ssl_tasks=ssl_tasks,
             specific_transforms=specific_transforms or {},
             apply_prob=apply_prob,
         )
@@ -230,7 +263,7 @@ def create_data_loaders(
     return train_loader, val_loader, test_loader
 
 
-def get_input_shape(dataset: SubjectWiseLoader) -> Tuple[int, int]:
+def get_input_shape(dataset) -> Tuple[int, int]:
     """データセットから入力形状を取得
 
     Args:
@@ -239,9 +272,15 @@ def get_input_shape(dataset: SubjectWiseLoader) -> Tuple[int, int]:
     Returns:
         (channels, sequence_length)
     """
-    sample_x, _ = dataset[0]
-    in_channels = sample_x.shape[1]
-    sequence_length = sample_x.shape[2]
+    sample_x = dataset[0]
+    # sample_x shape: (sample_threshold, channels, sequence_length)
+    if sample_x.dim() == 3:
+        in_channels = sample_x.shape[1]
+        sequence_length = sample_x.shape[2]
+    else:
+        # 旧形式との互換性
+        in_channels = sample_x.shape[1]
+        sequence_length = sample_x.shape[2]
     return in_channels, sequence_length
 
 
@@ -269,14 +308,18 @@ def setup_batch_dataloaders(
 
     # 拡張を準備（マルチタスクの場合）
     specific_transforms = {}
+    ssl_tasks = []
     if use_multitask:
         ssl_tasks = get_ssl_tasks_from_config(config)
-        specific_transforms = create_augmentation_transforms(ssl_tasks)
-        binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
-        aug_names = list(specific_transforms.keys())
+        specific_transforms = create_augmentation_transforms(ssl_tasks, config)
 
-        logger.info(f"Binary SSL tasks: {binary_tasks}")
-        logger.info(f"Augmentations: {aug_names}")
+        binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]
+        masking_tasks = [task for task in ssl_tasks if task.startswith("masking_")]
+
+        logger.info(f"SSL tasks: {ssl_tasks}")
+        logger.info(f"Binary tasks: {binary_tasks}")
+        logger.info(f"Masking tasks: {masking_tasks}")
+        logger.info(f"Transforms: {list(specific_transforms.keys())}")
 
     # データローダー設定を構築
     loader_config = DataLoaderConfig(
@@ -304,6 +347,7 @@ def setup_batch_dataloaders(
         all_paths,
         loader_config,
         use_multitask,
+        ssl_tasks,
         specific_transforms,
         apply_prob,
     )
@@ -324,20 +368,93 @@ def setup_batch_dataloaders(
     return train_loader, val_loader, test_loader, in_channels, sequence_length
 
 
+def apply_augmentations_batch(
+    x: torch.Tensor,
+    ssl_tasks: List[str],
+    transforms: Dict[str, Any],
+    apply_prob: float,
+    device: torch.device,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """バッチ全体に拡張を適用してラベルを生成
+
+    Args:
+        x: 入力データ (batch_size, channels, time_steps)
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        apply_prob: binary_*タスクの適用確率
+        device: デバイス
+
+    Returns:
+        (augmented_x, labels_dict): 拡張されたデータとラベル辞書
+    """
+    import torch
+    import numpy as np
+
+    batch_size = x.shape[0]
+    original_x = x.clone()
+    labels_dict = {}
+
+    # Binary拡張タスク
+    binary_tasks = [t for t in ssl_tasks if t.startswith("binary_")]
+    for task in binary_tasks:
+        aug_name = task.replace("binary_", "")
+
+        # ランダムに適用するか決定
+        apply = np.random.random() < apply_prob
+
+        if apply and aug_name in transforms:
+            # CPU上でnumpy配列として拡張を適用
+            x_np = x.cpu().numpy()
+            augmented = np.stack([transforms[aug_name](sample) for sample in x_np])
+            x = torch.from_numpy(augmented).float()
+
+        # ラベル: 全サンプルで同じ（バッチ全体に同じ拡張を適用）
+        labels_dict[task] = torch.full((batch_size,), 1 if apply else 0, dtype=torch.long)
+
+    # Maskingタスク
+    masking_tasks = [t for t in ssl_tasks if t.startswith("masking_")]
+    for task in masking_tasks:
+        mask_type = task.replace("masking_", "")
+
+        if mask_type in transforms:
+            masking_transform = transforms[mask_type]
+
+            # CPU上でマスキングを適用
+            x_np = x.cpu().numpy()
+            masked_batch = []
+            for sample in x_np:
+                masked_sample, _ = masking_transform(sample)
+                masked_batch.append(masked_sample)
+            x = torch.from_numpy(np.stack(masked_batch)).float()
+
+        # ラベル: 元データ（再構成ターゲット）
+        labels_dict[task] = original_x
+
+    # デバイスに移動
+    x = x.to(device)
+    labels_dict = {k: v.to(device) for k, v in labels_dict.items()}
+
+    return x, labels_dict
+
+
 def process_multitask_batch(
     x: torch.Tensor,
-    labels_tensor: torch.Tensor,
     model: nn.Module,
     criterion: nn.Module,
+    ssl_tasks: List[str],
+    transforms: Dict[str, Any],
+    apply_prob: float,
     device: torch.device,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
     """マルチタスクバッチを処理
 
     Args:
         x: 入力データ
-        labels_tensor: ラベルテンソル
         model: モデル
         criterion: 損失関数
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        apply_prob: binary_*タスクの適用確率
         device: デバイス
 
     Returns:
@@ -348,23 +465,18 @@ def process_multitask_batch(
     if x.dim() == 4:
         batch_size_loader, sample_threshold, channels, time = x.shape
         x = x.reshape(batch_size_loader * sample_threshold, channels, time)
-        labels_tensor = labels_tensor.reshape(batch_size_loader * sample_threshold, -1)
 
-    x = x.to(device)
-    labels_tensor = labels_tensor.to(device)
+    # 拡張を適用してラベルを生成
+    x, labels_dict = apply_augmentations_batch(x, ssl_tasks, transforms, apply_prob, device)
 
     # 各タスクについて順伝播
     predictions = {}
-    labels = {}
-    ssl_tasks = model.ssl_tasks
-
-    for i, task in enumerate(ssl_tasks):
+    for task in ssl_tasks:
         pred = model(x, task)
         predictions[task] = pred
-        labels[task] = labels_tensor[:, i]
 
     # 損失計算
-    total_loss, task_losses = criterion(predictions, labels)
+    total_loss, task_losses = criterion(predictions, labels_dict)
 
     return total_loss, task_losses, x
 
@@ -378,6 +490,9 @@ def train_epoch(
     epoch: int,
     use_wandb: bool = False,
     multitask: bool = False,
+    ssl_tasks: Optional[List[str]] = None,
+    transforms: Optional[Dict[str, Any]] = None,
+    apply_prob: float = 0.5,
 ) -> Dict[str, float]:
     """1エポック分の学習を実行
 
@@ -396,11 +511,12 @@ def train_epoch(
     """
     model.train()
     loss_meter = AverageMeter("Loss")
-    task_loss_meters = (
-        [AverageMeter(f"Task{i+1}") for i in range(NUM_TASK_METERS)]
-        if multitask
-        else None
-    )
+
+    # タスク数に応じて動的にメーターを作成
+    task_loss_meters = None
+    if multitask:
+        num_tasks = len(model.ssl_tasks)
+        task_loss_meters = [AverageMeter(f"Task{i+1}") for i in range(num_tasks)]
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
 
@@ -408,15 +524,14 @@ def train_epoch(
         optimizer.zero_grad()
 
         if multitask:
-            # マルチタスク学習: (x, labels)
-            x, labels_tensor = batch_data
+            # マルチタスク学習: データのみ受け取る
+            x = batch_data
             total_loss, task_losses, x = process_multitask_batch(
-                x, labels_tensor, model, criterion, device
+                x, model, criterion, ssl_tasks, transforms, apply_prob, device
             )
             loss = total_loss
 
             # タスク別損失を更新
-            ssl_tasks = model.ssl_tasks
             for i, task in enumerate(ssl_tasks):
                 task_loss_meters[i].update(task_losses[task].item(), x.size(0))
         else:
@@ -457,7 +572,6 @@ def train_epoch(
                 "train/step": epoch * len(dataloader) + batch_idx,
             }
             if multitask:
-                ssl_tasks = model.ssl_tasks
                 for i, task in enumerate(ssl_tasks):
                     log_dict[f"train/batch_{task}_loss"] = task_losses[task].item()
             wandb.log(log_dict)
@@ -475,6 +589,7 @@ def train_epoch(
 def create_model(
     config: Dict[str, Any],
     in_channels: int,
+    sequence_length: int,
     use_multitask: bool,
     multitask_config: Dict[str, Any],
     device: torch.device,
@@ -485,6 +600,7 @@ def create_model(
     Args:
         config: 設定辞書
         in_channels: 入力チャネル数
+        sequence_length: 入力系列長
         use_multitask: マルチタスク学習を使用するか
         multitask_config: マルチタスク設定
         device: デバイス
@@ -503,7 +619,11 @@ def create_model(
 
         # 統合モデルを作成
         model = IntegratedSSLModel(
-            backbone=backbone, ssl_tasks=ssl_tasks, hidden_dim=hidden_dim
+            backbone=backbone,
+            ssl_tasks=ssl_tasks,
+            hidden_dim=hidden_dim,
+            n_channels=in_channels,
+            sequence_length=sequence_length,
         ).to(device)
 
         logger.info(f"SSL tasks: {ssl_tasks}")
@@ -611,6 +731,8 @@ def run_training_loop(
     use_wandb: bool,
     use_multitask: bool,
     multitask_config: Dict[str, Any],
+    ssl_tasks: List[str],
+    transforms: Dict[str, Any],
     logger,
 ) -> None:
     """トレーニングループを実行
@@ -641,6 +763,7 @@ def run_training_loop(
         logger.info(f"\nEpoch {epoch}/{num_epochs}")
 
         # 学習
+        apply_prob = multitask_config.get("apply_prob", DEFAULT_APPLY_PROB)
         train_metrics = train_epoch(
             model,
             train_loader,
@@ -650,6 +773,9 @@ def run_training_loop(
             epoch,
             use_wandb,
             use_multitask,
+            ssl_tasks,
+            transforms,
+            apply_prob,
         )
 
         # メトリクスをログ
@@ -747,7 +873,7 @@ def main(args: argparse.Namespace) -> None:
 
     # モデルを作成
     model = create_model(
-        config, in_channels, use_multitask, multitask_config, device, logger
+        config, in_channels, sequence_length, use_multitask, multitask_config, device, logger
     )
 
     # 損失関数を作成
@@ -771,6 +897,13 @@ def main(args: argparse.Namespace) -> None:
     # W&Bを初期化
     use_wandb = init_wandb(config, model)
 
+    # 拡張とタスクを準備
+    ssl_tasks = []
+    specific_transforms = {}
+    if use_multitask:
+        ssl_tasks = get_ssl_tasks_from_config(config)
+        specific_transforms = create_augmentation_transforms(ssl_tasks, config)
+
     # トレーニングループを実行
     run_training_loop(
         model,
@@ -784,6 +917,8 @@ def main(args: argparse.Namespace) -> None:
         use_wandb,
         use_multitask,
         multitask_config,
+        ssl_tasks,
+        specific_transforms,
         logger,
     )
 

@@ -37,13 +37,13 @@ def get_device(device_name: str = "cuda") -> torch.device:
     デバイスを取得（CUDA、MPS、CPUの自動判定）
 
     Args:
-        device_name: 希望するデバイス名 ('cuda', 'mps', 'cpu')
+        device_name: 希望するデバイス名 ('cuda', 'cuda:0', 'cuda:1', 'mps', 'cpu')
 
     Returns:
         利用可能なデバイス
     """
-    if device_name == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
+    if device_name.startswith("cuda") and torch.cuda.is_available():
+        return torch.device(device_name)
     elif device_name == "mps" and torch.backends.mps.is_available():
         return torch.device("mps")
     else:

@@ -5,8 +5,10 @@ Supervised Fine-tuning スクリプト
 """
 
 import argparse
+import atexit
 import glob
 import shutil
+import signal
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -670,6 +672,31 @@ def main(args: argparse.Namespace) -> None:
     Args:
         args: コマンドライン引数
     """
+    # GPU メモリクリーンアップ関数
+    def cleanup_gpu():
+        """Ctrl+C時やプログラム終了時にGPUメモリを解放"""
+        try:
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("\n[Cleanup] GPU memory cleared")
+        except Exception as e:
+            print(f"\n[Cleanup] Error during cleanup: {e}")
+
+    # シグナルハンドラーを設定（Ctrl+C対応）
+    def signal_handler(signum, frame):
+        print("\n[Signal] Received interrupt signal. Cleaning up...")
+        cleanup_gpu()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # プログラム終了時にも実行
+    atexit.register(cleanup_gpu)
+
     # 設定をロード
     config = load_config(args.config)
     validate_config(config, mode="finetune")

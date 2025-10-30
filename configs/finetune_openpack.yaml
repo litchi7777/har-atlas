@@ -97,6 +97,6 @@ grid_search:
 settings:
   stop_on_error: false
   save_summary: true
-  summary_path: "logs/finetune_experiments_summary.json"
+  summary_path: "logs/finetune_openpack_experiments_summary.json"
   parallel: true  # GPU並列実行を有効化
   max_workers: null  # null=利用可能なGPU全て、数値=最大並列数

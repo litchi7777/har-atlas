@@ -272,8 +272,10 @@ def main(args):
     print(f"{'='*80}\n")
 
     # Create experiments directory
+    # scriptパスから実験タイプ（pretrain/finetune）を判定
+    script_name = Path(args.script).stem  # "pretrain" or "finetune"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = os.path.join("experiments", f"run_{timestamp}")
+    experiment_dir = os.path.join("experiments", script_name, f"run_{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
 
     # Save experiment plan (include grid_search and settings back)

@@ -386,8 +386,8 @@ def apply_augmentations_batch(
     transforms: Dict[str, Any],
     apply_prob: float,
     device: torch.device,
-) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-    """バッチ全体に拡張を適用してラベルを生成
+) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    """バッチ全体に拡張を適用してラベルを生成（各タスクで独立した拡張を適用）
 
     Args:
         x: 入力データ (batch_size, channels, time_steps)
@@ -397,35 +397,30 @@ def apply_augmentations_batch(
         device: デバイス
 
     Returns:
-        (augmented_x, labels_dict): 拡張されたデータとラベル辞書
+        (task_inputs_dict, labels_dict):
+            - task_inputs_dict: 各タスク用の拡張データ {'binary_permute': tensor, ...}
+            - labels_dict: 各タスクのラベル {'binary_permute': tensor, ...}
     """
     import torch
     import numpy as np
 
     batch_size = x.shape[0]
     original_x = x.clone()
+    task_inputs_dict = {}
     labels_dict = {}
 
-    # 通常のデータ拡張を最初に適用（PyTorch対応）
+    # 通常のデータ拡張を最初に適用（全タスク共通のベース）
+    x_base = x
     if "base_augmentation" in transforms:
         base_aug = transforms["base_augmentation"]
-        # GPU上で直接適用（PyTorch対応拡張なので）
-        if x.device.type == 'cpu':
-            # CPUの場合、各サンプルに適用
-            augmented_batch = []
-            for sample in x:
-                augmented_sample = base_aug(sample)
-                augmented_batch.append(augmented_sample)
-            x = torch.stack(augmented_batch)
-        else:
-            # GPUの場合、GPU上で直接適用
-            augmented_batch = []
-            for sample in x:
-                augmented_sample = base_aug(sample)
-                augmented_batch.append(augmented_sample)
-            x = torch.stack(augmented_batch)
+        # GPU上で直接適用
+        augmented_batch = []
+        for sample in x:
+            augmented_sample = base_aug(sample)
+            augmented_batch.append(augmented_sample)
+        x_base = torch.stack(augmented_batch)
 
-    # Binary拡張タスク
+    # Binary拡張タスク - 各タスクで独立した拡張を適用
     binary_tasks = [t for t in ssl_tasks if t.startswith("binary_")]
     for task in binary_tasks:
         aug_name = task.replace("binary_", "")
@@ -434,15 +429,20 @@ def apply_augmentations_batch(
         apply = np.random.random() < apply_prob
 
         if apply and aug_name in transforms:
+            # ベースデータをコピーして、このタスク専用の拡張を適用
+            x_task = x_base.clone()
             # CPU上でnumpy配列として拡張を適用
-            x_np = x.cpu().numpy()
+            x_np = x_task.cpu().numpy()
             augmented = np.stack([transforms[aug_name](sample) for sample in x_np])
-            x = torch.from_numpy(augmented).float()
+            task_inputs_dict[task] = torch.from_numpy(augmented).float()
+        else:
+            # 拡張なしの場合はベースデータをそのまま使用
+            task_inputs_dict[task] = x_base.clone()
 
         # ラベル: 全サンプルで同じ（バッチ全体に同じ拡張を適用）
         labels_dict[task] = torch.full((batch_size,), 1 if apply else 0, dtype=torch.long)
 
-    # Maskingタスク
+    # Maskingタスク - 各タスクで独立したマスキングを適用
     masking_tasks = [t for t in ssl_tasks if t.startswith("masking_")]
     for task in masking_tasks:
         mask_type = task.replace("masking_", "")
@@ -450,22 +450,26 @@ def apply_augmentations_batch(
         if mask_type in transforms:
             masking_transform = transforms[mask_type]
 
+            # ベースデータをコピーして、このタスク専用のマスキングを適用
+            x_task = x_base.clone()
             # CPU上でマスキングを適用
-            x_np = x.cpu().numpy()
+            x_np = x_task.cpu().numpy()
             masked_batch = []
             for sample in x_np:
                 masked_sample, _ = masking_transform(sample)
                 masked_batch.append(masked_sample)
-            x = torch.from_numpy(np.stack(masked_batch)).float()
+            task_inputs_dict[task] = torch.from_numpy(np.stack(masked_batch)).float()
+        else:
+            task_inputs_dict[task] = x_base.clone()
 
         # ラベル: 元データ（再構成ターゲット）
         labels_dict[task] = original_x
 
     # デバイスに移動
-    x = x.to(device)
+    task_inputs_dict = {k: v.to(device) for k, v in task_inputs_dict.items()}
     labels_dict = {k: v.to(device) for k, v in labels_dict.items()}
 
-    return x, labels_dict
+    return task_inputs_dict, labels_dict
 
 
 def process_multitask_batch(
@@ -477,7 +481,7 @@ def process_multitask_batch(
     apply_prob: float,
     device: torch.device,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
-    """マルチタスクバッチを処理
+    """マルチタスクバッチを処理（各タスクに独立した拡張データを渡す）
 
     Args:
         x: 入力データ
@@ -489,7 +493,7 @@ def process_multitask_batch(
         device: デバイス
 
     Returns:
-        (total_loss, task_losses, x) 処理後のデータ
+        (total_loss, task_losses, x_base) 処理後のデータ
     """
     # バッチローダー使用時は [batch_size, sample_threshold, channels, time]
     # -> [batch_size * sample_threshold, channels, time] にreshape
@@ -497,19 +501,25 @@ def process_multitask_batch(
         batch_size_loader, sample_threshold, channels, time = x.shape
         x = x.reshape(batch_size_loader * sample_threshold, channels, time)
 
-    # 拡張を適用してラベルを生成
-    x, labels_dict = apply_augmentations_batch(x, ssl_tasks, transforms, apply_prob, device)
+    # 拡張を適用してタスクごとの入力とラベルを生成
+    task_inputs_dict, labels_dict = apply_augmentations_batch(
+        x, ssl_tasks, transforms, apply_prob, device
+    )
 
-    # 各タスクについて順伝播
+    # 各タスクについて、専用の拡張データで順伝播
     predictions = {}
     for task in ssl_tasks:
-        pred = model(x, task)
+        x_task = task_inputs_dict[task]
+        pred = model(x_task, task)
         predictions[task] = pred
 
     # 損失計算
     total_loss, task_losses = criterion(predictions, labels_dict)
 
-    return total_loss, task_losses, x
+    # バッチサイズ計算用に最初のタスクの入力を返す
+    x_base = task_inputs_dict[ssl_tasks[0]]
+
+    return total_loss, task_losses, x_base
 
 
 def train_epoch(

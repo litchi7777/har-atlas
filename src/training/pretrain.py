@@ -124,15 +124,18 @@ def create_augmentation_transforms(
     """
     transforms = {}
 
-    # 通常のデータ拡張パイプラインを追加
+    # 通常のデータ拡張パイプラインを追加（有効な場合のみ）
     augmentation_config = config.get("augmentation", {})
-    aug_mode = augmentation_config.get("mode", "heavy")  # デフォルトはheavy
-    training_config = config.get("training", {})
-    max_epochs = training_config.get("epochs", 100)
+    aug_enabled = augmentation_config.get("enabled", True)  # デフォルトは有効
 
-    transforms["base_augmentation"] = get_augmentation_pipeline(
-        mode=aug_mode, max_epochs=max_epochs
-    )
+    if aug_enabled:
+        aug_mode = augmentation_config.get("mode", "heavy")  # デフォルトはheavy
+        training_config = config.get("training", {})
+        max_epochs = training_config.get("epochs", 100)
+
+        transforms["base_augmentation"] = get_augmentation_pipeline(
+            mode=aug_mode, max_epochs=max_epochs
+        )
 
     # Binary拡張タスクの処理
     binary_tasks = [task for task in ssl_tasks if task.startswith("binary_")]

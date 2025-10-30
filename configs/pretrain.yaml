@@ -38,7 +38,8 @@ multitask:
 
 # Data Augmentation
 augmentation:
-  mode: "mtl"  # light, medium, heavy, mtl
+  enabled: false  # データ拡張を無効化（シンプル化のため）
+  # mode: "mtl"  # light, medium, heavy, mtl
 
 # Training
 training:

@@ -147,6 +147,9 @@ experiments/
 scratch/
 notebooks/outputs/
 
+# Claude Code temporary files
+.claude/
+
 # Visualizations (generated HTML files)
 visualizations/*.html
 !visualizations/.gitkeep

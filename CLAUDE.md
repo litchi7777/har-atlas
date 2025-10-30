@@ -88,6 +88,14 @@ Repository: `git@github.com:litchi7777/har-foundation.git`
 - プロトタイプなら簡潔さを、本番なら堅牢性を優先
 - 妥協点とその理由を明確にドキュメント化
 
+## ファイル管理とディレクトリ構造
+- **一時的なテストコード**: `.claude/`ディレクトリに配置
+  - デバッグ用スクリプト、検証コード、実験的なコードなど
+  - プロジェクトの正式なコードベースには含めない一時的なファイル
+  - 例: `.claude/test_*.py`, `.claude/debug_*.py`, `.claude/scratch.py`
+- **正式なテスト**: `__test__/`ディレクトリに配置（pytest実行対象）
+- `.claude/`ディレクトリは`.gitignore`に追加し、バージョン管理から除外
+
 ## Git運用の基本
 - コンベンショナルコミット形式を使用（feat:, fix:, docs:, test:, refactor:, chore:）
 - コミットは原子的で、単一の変更に焦点を当てる

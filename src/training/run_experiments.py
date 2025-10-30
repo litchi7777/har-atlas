@@ -179,10 +179,6 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
     if "wandb" in config and config["wandb"].get("enabled", False):
         config["wandb"]["name"] = exp_name
 
-    # GPU指定があれば、configのdeviceを上書き
-    if gpu_id is not None:
-        config["device"] = f"cuda:{gpu_id}"
-
     # Save experiment config
     config_path = os.path.join(exp_dir, "config.yaml")
     save_yaml(config, config_path)
@@ -190,19 +186,28 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
     # Run training script
     start_time = datetime.now()
 
-    # 環境変数でGPUを指定（二重保険）
+    # 環境変数でGPUを指定
     env = os.environ.copy()
     if gpu_id is not None:
+        # CUDA_VISIBLE_DEVICESを使う場合、configのdeviceは常にcuda:0にする
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        config["device"] = "cuda:0"
+        # 更新したconfigを再保存
+        save_yaml(config, config_path)
+
+    # ログファイルのパス
+    log_file = os.path.join(exp_dir, "experiment.log")
 
     try:
-        result = subprocess.run(
-            [sys.executable, script_path, "--config", config_path],
-            capture_output=True,
-            text=True,
-            check=True,
-            env=env,
-        )
+        with open(log_file, "w") as f:
+            result = subprocess.run(
+                [sys.executable, script_path, "--config", config_path],
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=True,
+                env=env,
+            )
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -218,10 +223,18 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None):
         duration = (end_time - start_time).total_seconds()
 
         status = "failed"
-        error = str(e)
+
+        # ログファイルから最後の50行を読み取ってエラーとして保存
+        try:
+            with open(log_file, "r") as f:
+                log_lines = f.readlines()
+                error = "".join(log_lines[-50:])
+        except:
+            error = str(e)
 
         print(f"\n✗ Experiment '{exp_name}' failed")
         print(f"Error: {error}")
+        print(f"Log file: {log_file}")
         print(f"Duration: {duration:.2f} seconds")
 
     return {

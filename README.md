@@ -156,15 +156,32 @@ python visualize_server.py
 
 ### トレーニングの実行
 
-```bash
-# Fine-tuning（ファインチューニング）
-python train.py finetune
+**推奨コマンド（これだけで完結）**：
 
+```bash
 # Pre-training（事前学習）
 python train.py pretrain
+
+# Fine-tuning（ファインチューニング）
+python train.py finetune
 ```
 
-それだけです！グリッドサーチは設定ファイルの`grid_search`セクションに従って自動的に実行されます。
+それだけです！以下のことが自動的に行われます：
+
+- **グリッドサーチの自動検出**: 設定ファイルの`grid_search`セクションを読み取り、単一実験かグリッドサーチかを自動判定
+- **並列実行**: 利用可能なGPUを自動検出し、複数実験を並列実行（`settings.parallel: true`の場合）
+- **実験管理**: 各実験の設定、ログ、チェックポイントを自動的に保存
+
+**現在のpretrain設定例**（`configs/pretrain.yaml`）：
+- データセット: NHANES
+- GPU: cuda:0
+- グリッドサーチ: 3つのSSLタスク組み合わせを検証
+  1. `[binary_permute, binary_reverse, binary_timewarp]`
+  2. `[binary_permute, binary_reverse, binary_timewarp, masking_time_channel]`
+  3. `[masking_time_channel]`
+- 並列実行: 有効（`parallel: true`）
+
+実行すると、3つの実験が自動的に並列実行され、結果は`experiments/pretrain/run_YYYYMMDD_HHMMSS/`に保存されます。
 
 ### グリッドサーチの設定
 

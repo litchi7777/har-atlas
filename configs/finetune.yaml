@@ -92,7 +92,7 @@ grid_search:
       - null  # ランダム初期化（ベースライン）
       - "experiments/pretrain/run_20251029_171342/checkpoints/best_model.pth"  # epoch 40
       - "experiments/pretrain/run_20251029_171512/checkpoints/best_model.pth"  # epoch 100
-      - "experiments/pretrain/run_20251029_171644/checkpoints/best_model.pth"  # epoch 50
+      - "experiments/pretrain/run_20251029_060659/checkpoints/best_model.pth"  # epoch 50 (別実験)
 
 settings:
   stop_on_error: false

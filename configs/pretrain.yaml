@@ -52,7 +52,6 @@ mixed_precision: true
 # Checkpointing
 checkpoint:
   save_freq: 10
-  save_path: "models/pretrained"
 
 # Logging
 logging:

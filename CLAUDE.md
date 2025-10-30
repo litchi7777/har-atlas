@@ -199,13 +199,13 @@ pytest __test__/test_models.py::test_ssl_model_forward
    - ラベルなしデータで自己教師あり学習（SSL）
    - SimCLR、MoCo、BYOL等のSSL手法を使用
    - エンコーダーを学習し、一般的な特徴表現を獲得
-   - 出力: 事前学習済みエンコーダー（`models/pretrained/best_model.pth`）
+   - 出力: 事前学習済みエンコーダー（`experiments/pretrain/run_*/checkpoints/best_model.pth`）
 
 2. **Fine-tuning Phase（ファインチューニング）**
    - ラベル付きデータで教師あり学習
    - 事前学習済みエンコーダーをロード
    - クラス分類ヘッドを追加してファインチューニング
-   - 出力: 分類モデル（`models/finetuned/best_model.pth`）
+   - 出力: 分類モデル（`experiments/finetune/run_*/checkpoints/best_model.pth`）
 
 ### コードベース構造
 
@@ -277,9 +277,9 @@ base_config + grid_search_parameters = experiments
     ↓
 処理済みデータ (data/processed/)
     ↓
-PretrainDataset → Pre-training → 事前学習済みモデル (models/pretrained/)
+PretrainDataset → Pre-training → 事前学習済みモデル (experiments/pretrain/run_*)
     ↓
-FinetuneDataset + 事前学習済みモデル → Fine-tuning → 分類モデル (models/finetuned/)
+FinetuneDataset + 事前学習済みモデル → Fine-tuning → 分類モデル (experiments/finetune/run_*)
 ```
 
 ### データ前処理の詳細

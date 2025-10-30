@@ -56,7 +56,6 @@ mixed_precision: true
 checkpoint:
   save_best: true
   metric: "val_accuracy"  # val_accuracy, val_loss
-  save_path: "models/finetuned"
   resume: null
 
 # Evaluation

@@ -7,6 +7,7 @@ SSL手法（SimCLR、MoCo等）を用いた事前学習を実行します。
 import argparse
 import atexit
 import glob
+import os
 import shutil
 import signal
 import sys
@@ -539,6 +540,8 @@ def train_epoch(
     ssl_tasks: Optional[List[str]] = None,
     transforms: Optional[Dict[str, Any]] = None,
     apply_prob: float = 0.5,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    grad_clip_norm: Optional[float] = None,
 ) -> Dict[str, float]:
     """1エポック分の学習を実行
 
@@ -551,6 +554,11 @@ def train_epoch(
         epoch: 現在のエポック
         use_wandb: W&Bへのログを有効化するか
         multitask: マルチタスク学習モードか
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        apply_prob: binary_*タスクの適用確率
+        scaler: Mixed Precision用のGradScaler (Noneの場合は通常のfloat32学習)
+        grad_clip_norm: 勾配クリッピングの最大ノルム (Noneの場合はクリッピングなし)
 
     Returns:
         平均損失の辞書
@@ -569,30 +577,49 @@ def train_epoch(
     for batch_idx, batch_data in enumerate(pbar):
         optimizer.zero_grad()
 
-        if multitask:
-            # マルチタスク学習: データのみ受け取る
-            x = batch_data
-            total_loss, task_losses, x = process_multitask_batch(
-                x, model, criterion, ssl_tasks, transforms, apply_prob, device
-            )
-            loss = total_loss
+        # Mixed Precision Training
+        use_amp = scaler is not None
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            if multitask:
+                # マルチタスク学習: データのみ受け取る
+                x = batch_data
+                total_loss, task_losses, x = process_multitask_batch(
+                    x, model, criterion, ssl_tasks, transforms, apply_prob, device
+                )
+                loss = total_loss
 
-            # タスク別損失を更新
-            for i, task in enumerate(ssl_tasks):
-                task_loss_meters[i].update(task_losses[task].item(), x.size(0))
-        else:
-            # 通常のSSL: (views, _)
-            views, _ = batch_data
-            view1, view2 = views[0].to(device), views[1].to(device)
+                # タスク別損失を更新
+                for i, task in enumerate(ssl_tasks):
+                    task_loss_meters[i].update(task_losses[task].item(), x.size(0))
+            else:
+                # 通常のSSL: (views, _)
+                views, _ = batch_data
+                view1, view2 = views[0].to(device), views[1].to(device)
 
-            # 順伝播
-            z1, z2 = model(view1, view2)
-            loss = criterion(z1, z2)
-            x = view1  # for batch size
+                # 順伝播
+                z1, z2 = model(view1, view2)
+                loss = criterion(z1, z2)
+                x = view1  # for batch size
 
         # 逆伝播
-        loss.backward()
-        optimizer.step()
+        if use_amp:
+            scaler.scale(loss).backward()
+
+            # Gradient Clipping (AMPの場合はunscaleしてからクリップ)
+            if grad_clip_norm is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+
+            # Gradient Clipping
+            if grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+
+            optimizer.step()
 
         # 統計を更新
         loss_meter.update(loss.item(), x.size(0))
@@ -621,6 +648,76 @@ def train_epoch(
                 for i, task in enumerate(ssl_tasks):
                     log_dict[f"train/batch_{task}_loss"] = task_losses[task].item()
             wandb.log(log_dict)
+
+    # 結果を返す
+    if multitask:
+        result = {"loss": loss_meter.avg}
+        for i, meter in enumerate(task_loss_meters[: len(model.ssl_tasks)]):
+            result[f"task{i+1}_loss"] = meter.avg
+        return result
+    else:
+        return {"loss": loss_meter.avg}
+
+
+def evaluate_epoch(
+    model: nn.Module,
+    dataloader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    multitask: bool = False,
+    ssl_tasks: Optional[List[str]] = None,
+    transforms: Optional[Dict[str, Any]] = None,
+    apply_prob: float = 0.5,
+) -> Dict[str, float]:
+    """1エポック分の検証を実行
+
+    Args:
+        model: 評価するモデル
+        dataloader: データローダー
+        criterion: 損失関数
+        device: デバイス
+        multitask: マルチタスク学習モードか
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        apply_prob: binary_*タスクの適用確率
+
+    Returns:
+        平均損失の辞書
+    """
+    model.eval()
+    loss_meter = AverageMeter("Loss")
+
+    # タスク数に応じて動的にメーターを作成
+    task_loss_meters = None
+    if multitask:
+        num_tasks = len(model.ssl_tasks)
+        task_loss_meters = [AverageMeter(f"Task{i+1}") for i in range(num_tasks)]
+
+    with torch.no_grad():
+        for batch_data in tqdm(dataloader, desc="Validation"):
+            if multitask:
+                # マルチタスク学習: データのみ受け取る
+                x = batch_data
+                total_loss, task_losses, x = process_multitask_batch(
+                    x, model, criterion, ssl_tasks, transforms, apply_prob, device
+                )
+                loss = total_loss
+
+                # タスク別損失を更新
+                for i, task in enumerate(ssl_tasks):
+                    task_loss_meters[i].update(task_losses[task].item(), x.size(0))
+            else:
+                # 通常のSSL: (views, _)
+                views, _ = batch_data
+                view1, view2 = views[0].to(device), views[1].to(device)
+
+                # 順伝播
+                z1, z2 = model(view1, view2)
+                loss = criterion(z1, z2)
+                x = view1  # for batch size
+
+            # 統計を更新
+            loss_meter.update(loss.item(), x.size(0))
 
     # 結果を返す
     if multitask:
@@ -720,6 +817,7 @@ def create_criterion(
 def log_epoch_metrics(
     epoch: int,
     train_metrics: Dict[str, float],
+    val_metrics: Optional[Dict[str, float]],
     use_multitask: bool,
     multitask_config: Dict[str, Any],
     optimizer: torch.optim.Optimizer,
@@ -731,6 +829,7 @@ def log_epoch_metrics(
     Args:
         epoch: エポック数
         train_metrics: トレーニングメトリクス
+        val_metrics: 検証メトリクス（Noneの場合は検証を実行していない）
         use_multitask: マルチタスク学習を使用するか
         multitask_config: マルチタスク設定
         optimizer: オプティマイザー
@@ -747,9 +846,22 @@ def log_epoch_metrics(
                 for i, task in enumerate(ssl_tasks)
             ]
         )
-        logger.info(f"Epoch {epoch} - Loss: {train_loss:.4f}, {task_losses_str}")
+        logger.info(f"Epoch {epoch} - Train Loss: {train_loss:.4f}, {task_losses_str}")
+
+        # 検証メトリクスをログ
+        if val_metrics is not None:
+            val_loss = val_metrics["loss"]
+            val_task_losses_str = ", ".join(
+                [
+                    f"{task}: {val_metrics[f'task{i+1}_loss']:.4f}"
+                    for i, task in enumerate(ssl_tasks)
+                ]
+            )
+            logger.info(f"Epoch {epoch} - Val Loss: {val_loss:.4f}, {val_task_losses_str}")
     else:
-        logger.info(f"Epoch {epoch} - Average Loss: {train_loss:.4f}")
+        logger.info(f"Epoch {epoch} - Train Loss: {train_loss:.4f}")
+        if val_metrics is not None:
+            logger.info(f"Epoch {epoch} - Val Loss: {val_metrics['loss']:.4f}")
 
     # W&Bにログ
     if use_wandb:
@@ -762,12 +874,21 @@ def log_epoch_metrics(
             ssl_tasks = get_ssl_tasks_from_config({"multitask": multitask_config})
             for i, task in enumerate(ssl_tasks):
                 log_dict[f"train/epoch_{task}_loss"] = train_metrics[f"task{i+1}_loss"]
+
+        # 検証メトリクスを追加
+        if val_metrics is not None:
+            log_dict["val/epoch_loss"] = val_metrics["loss"]
+            if use_multitask:
+                for i, task in enumerate(ssl_tasks):
+                    log_dict[f"val/epoch_{task}_loss"] = val_metrics[f"task{i+1}_loss"]
+
         wandb.log(log_dict)
 
 
 def run_training_loop(
     model: nn.Module,
     train_loader: DataLoader,
+    val_loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
@@ -786,6 +907,7 @@ def run_training_loop(
     Args:
         model: モデル
         train_loader: トレーニングデータローダー
+        val_loader: 検証データローダー
         criterion: 損失関数
         optimizer: オプティマイザー
         scheduler: スケジューラー
@@ -795,11 +917,49 @@ def run_training_loop(
         use_wandb: W&Bを使用するか
         use_multitask: マルチタスク学習を使用するか
         multitask_config: マルチタスク設定
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
         logger: ロガー
     """
     best_loss = float("inf")
     save_path = str(experiment_dirs.checkpoint)
     num_epochs = config["training"]["epochs"]
+    eval_interval = config.get("evaluation", {}).get("eval_interval", 1)
+    save_freq = config["checkpoint"].get("save_freq", 10)
+
+    # Mixed Precision Training
+    use_amp = config.get("mixed_precision", False) and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    if use_amp:
+        logger.info("Mixed Precision Training: Enabled")
+    else:
+        logger.info("Mixed Precision Training: Disabled")
+
+    # Gradient Clipping
+    grad_clip_norm = config["training"].get("grad_clip_norm", None)
+    if grad_clip_norm is not None:
+        logger.info(f"Gradient Clipping: Enabled (max_norm={grad_clip_norm})")
+    else:
+        logger.info("Gradient Clipping: Disabled")
+
+    # Early Stopping
+    early_stopping_config = config.get("early_stopping", {})
+    use_early_stopping = early_stopping_config.get("enabled", False)
+    if use_early_stopping:
+        from src.utils.training import EarlyStopping
+        early_stopping = EarlyStopping(
+            patience=early_stopping_config.get("patience", 10),
+            min_delta=early_stopping_config.get("min_delta", 0.0),
+            mode="min"
+        )
+        logger.info(f"Early Stopping: Enabled (patience={early_stopping.patience}, min_delta={early_stopping.min_delta})")
+    else:
+        early_stopping = None
+        logger.info("Early Stopping: Disabled")
+
+    # save_freq期間内での最良モデルを追跡
+    window_best_loss = float("inf")
+    window_best_state = None
 
     logger.info("=" * 80)
     logger.info("Starting training...")
@@ -822,12 +982,29 @@ def run_training_loop(
             ssl_tasks,
             transforms,
             apply_prob,
+            scaler,
+            grad_clip_norm,
         )
+
+        # 検証
+        val_metrics = None
+        if epoch % eval_interval == 0:
+            val_metrics = evaluate_epoch(
+                model,
+                val_loader,
+                criterion,
+                device,
+                use_multitask,
+                ssl_tasks,
+                transforms,
+                apply_prob,
+            )
 
         # メトリクスをログ
         log_epoch_metrics(
             epoch,
             train_metrics,
+            val_metrics,
             use_multitask,
             multitask_config,
             optimizer,
@@ -835,34 +1012,80 @@ def run_training_loop(
             logger,
         )
 
+        # ベストモデルの判定にはval_lossを優先、なければtrain_lossを使用
+        current_loss = val_metrics["loss"] if val_metrics is not None else train_metrics["loss"]
+
+        # 全体のベストモデルを更新
+        if current_loss < best_loss:
+            best_loss = current_loss
+            loss_type = "val" if val_metrics is not None else "train"
+            logger.info(f"New best {loss_type} loss: {best_loss:.4f}")
+
+        # Early Stopping チェック
+        if early_stopping is not None:
+            if early_stopping(current_loss):
+                logger.info(f"Early stopping triggered at epoch {epoch}")
+                logger.info(f"Best loss: {best_loss:.4f}")
+                break
+
+        # save_freq期間内でのベストモデルを追跡
+        if current_loss < window_best_loss:
+            window_best_loss = current_loss
+            # メトリクスにval_metricsも含める
+            metrics_to_save = {"train": train_metrics}
+            if val_metrics is not None:
+                metrics_to_save["val"] = val_metrics
+
+            # ベストモデルの状態を保存（メモリ内）
+            window_best_state = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict().copy(),
+                "optimizer_state_dict": optimizer.state_dict().copy(),
+                "metrics": metrics_to_save,
+            }
+
         # 学習率を更新
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(train_metrics["loss"])
+                # val_metricsがあればそれを使用、なければtrain_metricsを使用
+                metric_for_scheduler = val_metrics["loss"] if val_metrics is not None else train_metrics["loss"]
+                scheduler.step(metric_for_scheduler)
             else:
                 scheduler.step()
 
             current_lr = optimizer.param_groups[0]["lr"]
             logger.info(f"Learning rate: {current_lr:.6f}")
 
-        # チェックポイントを保存
-        save_freq = config["checkpoint"].get("save_freq", 10)
+        # save_freq期間ごと、または最終エポックでチェックポイントを保存
         if epoch % save_freq == 0 or epoch == num_epochs:
-            is_best = train_metrics["loss"] < best_loss
+            if window_best_state is not None:
+                # save_freq期間内で最良だったエポックのチェックポイントを保存
+                best_epoch = window_best_state["epoch"]
+                is_best = window_best_loss <= best_loss
 
-            if is_best:
-                best_loss = train_metrics["loss"]
-                logger.info(f"New best loss: {best_loss:.4f}")
+                # チェックポイントを保存
+                checkpoint = {
+                    "epoch": window_best_state["epoch"],
+                    "model_state_dict": window_best_state["model_state_dict"],
+                    "optimizer_state_dict": window_best_state["optimizer_state_dict"],
+                    "metrics": window_best_state["metrics"],
+                }
 
-            save_file = save_checkpoint(
-                model=model,
-                optimizer=optimizer,
-                epoch=epoch,
-                metrics=train_metrics,
-                save_path=save_path,
-                is_best=is_best,
-            )
-            logger.info(f"Checkpoint saved to {save_file}")
+                filename = f"checkpoint_epoch_{best_epoch}.pth"
+                save_file = os.path.join(save_path, filename)
+                torch.save(checkpoint, save_file)
+
+                logger.info(f"Checkpoint saved: {filename} (best in epochs {epoch-save_freq+1}-{epoch}, loss={window_best_loss:.4f})")
+
+                # ベストモデルとして保存
+                if is_best:
+                    best_file = os.path.join(save_path, "best_model.pth")
+                    torch.save(checkpoint, best_file)
+                    logger.info(f"Updated best model: {best_file}")
+
+                # 次のウィンドウのためにリセット
+                window_best_loss = float("inf")
+                window_best_state = None
 
     # 完了
     logger.info("=" * 80)
@@ -907,11 +1130,33 @@ def main(args: argparse.Namespace) -> None:
     validate_config(config, mode="pretrain")
 
     # 実験ディレクトリを作成
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+    # グリッドサーチ時は run_experiments.py が checkpoint.save_path と logging.log_dir を設定済み
+    # その場合はそれを使用し、未設定の場合のみ新規作成
+    if "checkpoint" in config and "save_path" in config["checkpoint"]:
+        # run_experiments.py によって設定済み（グリッドサーチモード）
+        # run_experiments.py は exp_dir/models と exp_dir/logs を設定する
+        checkpoint_dir = Path(config["checkpoint"]["save_path"])
+        log_dir = Path(config.get("logging", {}).get("log_dir", checkpoint_dir.parent / "logs"))
+        experiment_root = checkpoint_dir.parent  # これが exp_dir
 
-    # 設定ファイルを実験ディレクトリにコピー
-    shutil.copy(args.config, experiment_dirs.root / "config.yaml")
+        # ディレクトリを作成
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        experiment_dirs = ExperimentDirs(
+            root=experiment_root,  # exp_dir（実験名のディレクトリ）
+            checkpoint=checkpoint_dir,  # exp_dir/models
+            log=log_dir  # exp_dir/logs
+        )
+    else:
+        # 通常モード: タイムスタンプベースのディレクトリを新規作成
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+
+    # 設定ファイルを実験ディレクトリにコピー（まだコピーされていない場合のみ）
+    config_copy_path = experiment_dirs.root / "config.yaml"
+    if not config_copy_path.exists():
+        shutil.copy(args.config, config_copy_path)
 
     # ロガーをセットアップ
     logger = setup_logger("pretrain", str(experiment_dirs.log))
@@ -981,6 +1226,7 @@ def main(args: argparse.Namespace) -> None:
     run_training_loop(
         model,
         train_loader,
+        val_loader,
         criterion,
         optimizer,
         scheduler,

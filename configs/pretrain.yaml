@@ -49,6 +49,7 @@ training:
   optimizer: "adam"
   scheduler: "cosine"
   warmup_epochs: 10
+  grad_clip_norm: 1.0  # 勾配クリッピング（1.0推奨、無効化する場合はnull）
 
 # Hardware
 device: "cuda:0"
@@ -57,6 +58,12 @@ mixed_precision: true
 # Checkpointing
 checkpoint:
   save_freq: 10
+
+# Early Stopping
+early_stopping:
+  enabled: false  # Early Stoppingを有効化（長時間学習時に推奨）
+  patience: 20    # 改善が見られないエポック数
+  min_delta: 0.001  # 改善と見なす最小変化量
 
 # Logging
 logging:

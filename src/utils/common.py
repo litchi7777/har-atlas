@@ -79,6 +79,9 @@ def save_checkpoint(
     save_path: str,
     filename: Optional[str] = None,
     is_best: bool = False,
+    keep_top_k: Optional[int] = None,
+    metric_key: str = "val.loss",
+    mode: str = "min",
 ) -> str:
     """
     モデルチェックポイントを保存
@@ -91,6 +94,9 @@ def save_checkpoint(
         save_path: 保存先ディレクトリ
         filename: ファイル名（Noneの場合はエポック番号から生成）
         is_best: ベストモデルとして保存するか
+        keep_top_k: 保持するチェックポイントの最大数（Noneの場合は全て保持）
+        metric_key: 評価に使用するメトリクスのキー（例: "val.loss", "train.loss"）
+        mode: 評価モード（"min"または"max"）
 
     Returns:
         保存したファイルパス
@@ -116,7 +122,84 @@ def save_checkpoint(
         best_file = os.path.join(save_path, "best_model.pth")
         torch.save(checkpoint, best_file)
 
+    # Top-k チェックポイント管理
+    if keep_top_k is not None and keep_top_k > 0:
+        _manage_checkpoints(save_path, keep_top_k, metric_key, mode)
+
     return save_file
+
+
+def _manage_checkpoints(
+    save_path: str,
+    keep_top_k: int,
+    metric_key: str = "val.loss",
+    mode: str = "min",
+) -> None:
+    """
+    チェックポイントディレクトリ内のファイルを管理し、top-kのみを保持
+
+    Args:
+        save_path: チェックポイントディレクトリ
+        keep_top_k: 保持するチェックポイント数
+        metric_key: 評価に使用するメトリクスのキー
+        mode: "min"（小さいほど良い）または "max"（大きいほど良い）
+    """
+    from pathlib import Path
+    import glob
+
+    # checkpoint_epoch_*.pth ファイルを検索
+    checkpoint_pattern = os.path.join(save_path, "checkpoint_epoch_*.pth")
+    checkpoint_files = glob.glob(checkpoint_pattern)
+
+    if len(checkpoint_files) <= keep_top_k:
+        return  # 削除の必要なし
+
+    # 各チェックポイントのメトリクスを読み込む
+    checkpoint_metrics = []
+    for ckpt_file in checkpoint_files:
+        try:
+            ckpt = torch.load(ckpt_file, map_location="cpu")
+            metrics = ckpt.get("metrics", {})
+
+            # ネストされたメトリクスキーをサポート（例: "val.loss"）
+            metric_value = metrics
+            for key in metric_key.split("."):
+                if isinstance(metric_value, dict):
+                    metric_value = metric_value.get(key)
+                else:
+                    break
+
+            # メトリクスが取得できない場合はスキップ
+            if metric_value is None:
+                continue
+
+            checkpoint_metrics.append({
+                "file": ckpt_file,
+                "epoch": ckpt.get("epoch", 0),
+                "metric": float(metric_value),
+            })
+        except Exception as e:
+            # ファイル読み込みに失敗した場合は警告して続行
+            print(f"Warning: Failed to load checkpoint {ckpt_file}: {e}")
+            continue
+
+    if len(checkpoint_metrics) <= keep_top_k:
+        return
+
+    # メトリクスでソート
+    reverse = (mode == "max")
+    checkpoint_metrics.sort(key=lambda x: x["metric"], reverse=reverse)
+
+    # 削除するチェックポイント（下位のもの）
+    to_delete = checkpoint_metrics[keep_top_k:]
+
+    for ckpt_info in to_delete:
+        try:
+            os.remove(ckpt_info["file"])
+            print(f"Removed checkpoint: {Path(ckpt_info['file']).name} "
+                  f"(epoch={ckpt_info['epoch']}, {metric_key}={ckpt_info['metric']:.4f})")
+        except Exception as e:
+            print(f"Warning: Failed to remove checkpoint {ckpt_info['file']}: {e}")
 
 
 def load_checkpoint(

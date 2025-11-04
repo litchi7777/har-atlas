@@ -123,7 +123,7 @@ def generate_grid_experiments(base_config, grid_params):
         param_values.append(values if isinstance(values, list) else [values])
 
     # Generate all combinations
-    for combination in product(*param_values):
+    for idx, combination in enumerate(product(*param_values)):
         config = copy.deepcopy(base_config)
         exp_name_parts = []
 
@@ -138,9 +138,33 @@ def generate_grid_experiments(base_config, grid_params):
             current[keys[-1]] = value
 
             # Build experiment name
-            exp_name_parts.append(f"{keys[-1]}={value}")
+            # 値が長い文字列（ファイルパス等）の場合は、短縮表現を使用
+            if isinstance(value, str) and len(str(value)) > 30:
+                # nullの場合
+                if value is None or value == "null":
+                    value_str = "null"
+                # ファイルパスの場合は、親ディレクトリ名を使用
+                elif "/" in value or "\\" in value:
+                    path_parts = value.replace("\\", "/").split("/")
+                    # checkpoint_epoch_N.pth のようなファイル名を抽出
+                    if path_parts[-1].endswith(".pth"):
+                        value_str = Path(value).stem  # 拡張子なしのファイル名
+                    else:
+                        # ディレクトリの場合は最後の2つの部分を使用
+                        value_str = "_".join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]
+                else:
+                    # その他の長い文字列は最初の30文字のみ
+                    value_str = str(value)[:30]
+            else:
+                value_str = str(value)
+
+            exp_name_parts.append(f"{keys[-1]}={value_str}")
 
         exp_name = "_".join(exp_name_parts)
+        # 実験名が重複する場合に備えてインデックスを追加
+        if len(experiments) > 0 and any(e["name"] == exp_name for e in experiments):
+            exp_name = f"{exp_name}_{idx}"
+
         experiments.append({"name": exp_name, "config": config})
 
     return experiments
@@ -204,16 +228,29 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
     # ログファイルのパス
     log_file = os.path.join(exp_dir, "experiment.log")
 
+    # script_pathからfinetuneかpretrainかを判定
+    is_finetune = "finetune" in script_path
+
     try:
-        with open(log_file, "w") as f:
+        if is_finetune:
+            # finetuneの場合は標準出力に直接表示
             result = subprocess.run(
                 [sys.executable, script_path, "--config", config_path],
-                stdout=f,
-                stderr=subprocess.STDOUT,
                 text=True,
                 check=True,
                 env=env,
             )
+        else:
+            # pretrainの場合はログファイルに保存
+            with open(log_file, "w") as f:
+                result = subprocess.run(
+                    [sys.executable, script_path, "--config", config_path],
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=True,
+                    env=env,
+                )
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -231,16 +268,22 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
         status = "failed"
 
         # ログファイルから最後の50行を読み取ってエラーとして保存
-        try:
-            with open(log_file, "r") as f:
-                log_lines = f.readlines()
-                error = "".join(log_lines[-50:])
-        except:
+        if is_finetune:
+            # finetuneの場合はエラーメッセージのみ
             error = str(e)
+        else:
+            # pretrainの場合はログファイルから読み取る
+            try:
+                with open(log_file, "r") as f:
+                    log_lines = f.readlines()
+                    error = "".join(log_lines[-50:])
+            except:
+                error = str(e)
 
         print(f"\n✗ Experiment '{exp_name}' failed")
         print(f"Error: {error}")
-        print(f"Log file: {log_file}")
+        if not is_finetune:
+            print(f"Log file: {log_file}")
         print(f"Duration: {duration:.2f} seconds")
 
     return {

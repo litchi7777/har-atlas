@@ -777,6 +777,12 @@ class SensorClassificationModel(nn.Module):
         else:
             state_dict = checkpoint
 
+        # 現在のエンコーダーのキーを取得
+        encoder_keys = set(self.encoder.state_dict().keys())
+
+        print(f"Loading pretrained weights from {path}")
+        print(f"Target encoder has {len(encoder_keys)} parameters")
+
         # backbone.* の重みを抽出（IntegratedSSLModelの場合）
         encoder_state = {}
         for key, value in state_dict.items():
@@ -796,16 +802,38 @@ class SensorClassificationModel(nn.Module):
                 f"but found: {list(state_dict.keys())[:5]}..."
             )
 
-        # Load into encoder
-        missing_keys, unexpected_keys = self.encoder.load_state_dict(encoder_state, strict=False)
+        print(f"Pretrained checkpoint has {len(encoder_state)} encoder parameters")
+
+        # キーの完全一致をチェック
+        loaded_keys = set(encoder_state.keys())
+        missing_keys = encoder_keys - loaded_keys
+        unexpected_keys = loaded_keys - encoder_keys
+        matched_keys = encoder_keys & loaded_keys
+
+        print(f"\nKey matching report:")
+        print(f"  Matched keys: {len(matched_keys)}/{len(encoder_keys)} ({100*len(matched_keys)/len(encoder_keys):.1f}%)")
 
         if missing_keys:
-            print(f"Warning: Missing keys in encoder: {missing_keys[:5]}...")
-        if unexpected_keys:
-            print(f"Warning: Unexpected keys in checkpoint: {unexpected_keys[:5]}...")
+            print(f"  Missing keys in checkpoint: {len(missing_keys)}")
+            print(f"    First 10: {list(missing_keys)[:10]}")
 
-        print(f"✓ Loaded pretrained weights from {path}")
-        print(f"  Loaded {len(encoder_state)} parameter tensors")
+        if unexpected_keys:
+            print(f"  Unexpected keys in checkpoint: {len(unexpected_keys)}")
+            print(f"    First 10: {list(unexpected_keys)[:10]}")
+
+        # 完全一致しない場合は警告
+        if missing_keys or unexpected_keys:
+            print(f"\n⚠️  WARNING: Weight keys do not match perfectly!")
+            print(f"   This may result in suboptimal transfer learning performance.")
+            print(f"   Consider checking if the pretrained model architecture matches.")
+        else:
+            print(f"\n✓ Perfect key match! All weights will be loaded correctly.")
+
+        # Load into encoder
+        incompatible_keys = self.encoder.load_state_dict(encoder_state, strict=False)
+
+        print(f"\n✓ Loaded pretrained weights from {path}")
+        print(f"  Successfully loaded {len(matched_keys)} parameter tensors")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

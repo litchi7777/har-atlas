@@ -151,17 +151,41 @@ wandb login
 
 ### トレーニング
 
+**重要**: トレーニングは必ず以下のコマンドを使用してください：
+
 ```bash
 # Fine-tuning（ファインチューニング）
 python train.py finetune
 
 # Pre-training（事前学習）
 python train.py pretrain
-
-# グリッドサーチは設定ファイルのgrid_searchセクションに従って自動実行される
-# - パラメータ1つだけ → 単一実験
-# - パラメータ複数 → グリッドサーチで全組み合わせ
 ```
+
+**動作の詳細**:
+- 設定ファイルに`grid_search`セクションがある場合、**パラメータが1つでも複数でも**、必ず`run_experiments.py`を使用して実験を実行します
+- これにより、`grid_search`で指定したパラメータが確実に適用されます
+- `grid_search`セクションがない場合のみ、直接トレーニングスクリプトを実行します
+
+**パラメータ適用の仕組み**:
+```yaml
+# 基本設定
+model:
+  pretrained_path: null  # ベースはnull
+
+# grid_searchセクションでオーバーライド
+grid_search:
+  model:
+    pretrained_path: ["path/to/checkpoint.pth"]  # 1つでもrun_experiments.pyが使用される
+
+# → run_experiments.pyが設定を生成し、pretrained_pathが確実に適用される
+```
+
+**禁止事項**:
+- ~~`python src/training/pretrain.py`~~ (直接実行しない)
+- ~~`python src/training/finetune.py`~~ (直接実行しない)
+- ~~`python src/training/run_experiments.py`~~ (直接実行しない)
+
+**理由**: `train.py`経由で実行することで、grid_searchセクションの有無を自動検出し、適切なスクリプトを選択します。
 
 ### ログと可視化
 

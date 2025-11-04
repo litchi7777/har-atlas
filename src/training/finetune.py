@@ -594,17 +594,6 @@ def run_training_loop(
                 best_metric = current_metric
                 logger.info(f"New best accuracy: {best_metric:.4f}")
 
-                # ベストモデルを保存
-                best_model_path = experiment_dirs.checkpoint / "best_model.pth"
-                torch.save({
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "best_metric": best_metric,
-                    "val_metrics": val_metrics,
-                }, best_model_path)
-                logger.info(f"Best model saved to {best_model_path}")
-
             # Early stoppingチェック
             if early_stopping(current_metric):
                 logger.info(f"Early stopping triggered after {epoch} epochs")
@@ -621,18 +610,10 @@ def run_training_loop(
             current_lr = optimizer.param_groups[0]["lr"]
             logger.info(f"Learning rate: {current_lr:.6f}")
 
-    # トレーニング完了後、ベストモデルをロードしてテストセットで評価
+    # トレーニング完了後、テストセットで評価（現在のモデルを使用）
     logger.info("=" * 80)
-    logger.info("Loading best model and evaluating on test set...")
+    logger.info("Evaluating on test set...")
     logger.info("=" * 80)
-
-    best_model_path = experiment_dirs.checkpoint / "best_model.pth"
-    if best_model_path.exists():
-        checkpoint = torch.load(best_model_path, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        logger.info(f"Loaded best model from {best_model_path}")
-    else:
-        logger.warning("Best model not found, using current model state")
 
     # テストセットで最終評価
     test_metrics = evaluate(model, test_loader, criterion, device)

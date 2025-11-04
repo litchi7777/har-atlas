@@ -168,9 +168,11 @@ python train.py finetune
 
 それだけです！以下のことが自動的に行われます：
 
-- **グリッドサーチの自動検出**: 設定ファイルの`grid_search`セクションを読み取り、単一実験かグリッドサーチかを自動判定
+- **グリッドサーチの自動検出**: 設定ファイルに`grid_search`セクションがあれば、**単一の値でも**常に`run_experiments.py`を使用してパラメータを正しく適用
 - **並列実行**: 利用可能なGPUを自動検出し、複数実験を並列実行（`settings.parallel: true`の場合）
 - **実験管理**: 各実験の設定、ログ、チェックポイントを自動的に保存
+
+**重要**: `grid_search`セクションがある場合は、**パラメータが1つだけでも**必ず`run_experiments.py`経由で実行されます。これにより、`grid_search`で指定したパラメータが確実に適用されます。
 
 **現在のpretrain設定例**（`configs/pretrain.yaml`）：
 - データセット: NHANES
@@ -191,13 +193,17 @@ python train.py finetune
 # configs/finetune.yaml
 grid_search:
   training:
-    learning_rate: [0.0001]  # 1つだけ = 単一実験
+    learning_rate: [0.0001]  # 1つだけでもrun_experiments.pyが使用される
+  model:
+    pretrained_path: ["path/to/checkpoint.pth"]  # 事前学習モデルの指定
 ```
 
 実行：
 ```bash
-python train.py finetune  # 1実験のみ実行
+python train.py finetune  # grid_searchセクションがあるため、run_experiments.pyで実行される
 ```
+
+**注**: `grid_search`セクションにパラメータが1つだけでも、`run_experiments.py`を使用することで、そのパラメータが確実に適用されます。
 
 #### 複数実験（グリッドサーチ）
 

@@ -22,7 +22,7 @@ def is_grid_search(config_path):
     設定ファイルにグリッドサーチが含まれているか判定
 
     Returns:
-        True if grid search (複数の値), False if single experiment
+        True if grid search section exists, False otherwise
     """
     import yaml
 
@@ -31,21 +31,9 @@ def is_grid_search(config_path):
 
     grid_search = config.get('grid_search', {})
 
-    if not grid_search:
-        return False
-
-    # グリッドサーチパラメータをフラット化
-    def has_multiple_values(d):
-        """辞書内に複数の値を持つリストがあるかチェック"""
-        for key, value in d.items():
-            if isinstance(value, dict):
-                if has_multiple_values(value):
-                    return True
-            elif isinstance(value, list) and len(value) > 1:
-                return True
-        return False
-
-    return has_multiple_values(grid_search)
+    # grid_searchセクションが存在する場合は常にrun_experiments.pyを使用
+    # 単一の値でも、grid_searchのパラメータを正しく適用するため
+    return bool(grid_search)
 
 
 def main():
@@ -58,8 +46,8 @@ Examples:
   python train.py pretrain
 
 Grid search is automatically detected from config:
-  - Single values in grid_search → Normal training
-  - Multiple values in grid_search → Grid search
+  - If grid_search section exists → Uses run_experiments.py (even for single value)
+  - If no grid_search section → Direct training
         """
     )
 
@@ -95,7 +83,7 @@ Grid search is automatically detected from config:
 
     # Check if grid search
     if is_grid_search(config_path):
-        print("🔍 Grid search detected - running multiple experiments\n")
+        print("🔍 Grid search section detected - using run_experiments.py\n")
 
         from src.training.run_experiments import main as run_experiments
 

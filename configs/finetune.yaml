@@ -63,11 +63,6 @@ evaluation:
   eval_interval: 1  # evaluate every N epochs
   metrics: ["accuracy", "f1", "precision", "recall"]
 
-# Logging
-logging:
-  log_interval: 10
-  log_dir: "logs/finetune"
-
 # Weights & Biases
 wandb:
   enabled: true

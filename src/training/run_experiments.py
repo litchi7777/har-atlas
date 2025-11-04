@@ -197,8 +197,6 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
     # Update config paths
     if "checkpoint" in config:
         config["checkpoint"]["save_path"] = os.path.join(exp_dir, "models")
-    if "logging" in config:
-        config["logging"]["log_dir"] = os.path.join(exp_dir, "logs")
 
     # Update W&B run name and group if enabled
     if "wandb" in config and config["wandb"].get("enabled", False):

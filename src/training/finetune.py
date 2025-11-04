@@ -110,20 +110,17 @@ class ExperimentDirs:
 
     root: Path
     checkpoint: Path
-    log: Path
 
     @classmethod
     def create(cls, base_dir: Path, run_id: str) -> "ExperimentDirs":
         """実験ディレクトリを作成"""
         root = base_dir / "finetune" / f"run_{run_id}"
         checkpoint = root / "checkpoints"
-        log = root / "logs"
 
         root.mkdir(parents=True, exist_ok=True)
         checkpoint.mkdir(exist_ok=True)
-        log.mkdir(exist_ok=True)
 
-        return cls(root=root, checkpoint=checkpoint, log=log)
+        return cls(root=root, checkpoint=checkpoint)
 
 
 @dataclass
@@ -683,14 +680,32 @@ def main(args: argparse.Namespace) -> None:
     validate_config(config, mode="finetune")
 
     # 実験ディレクトリを作成
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+    # グリッドサーチ時は run_experiments.py が checkpoint.save_path を設定済み
+    # その場合はそれを使用し、未設定の場合のみ新規作成
+    if "checkpoint" in config and "save_path" in config["checkpoint"]:
+        # run_experiments.py によって設定済み（グリッドサーチモード）
+        checkpoint_dir = Path(config["checkpoint"]["save_path"])
+        experiment_root = checkpoint_dir.parent  # これが exp_dir
 
-    # 設定ファイルを実験ディレクトリにコピー
-    shutil.copy(args.config, experiment_dirs.root / "config.yaml")
+        # ディレクトリを作成
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    # ロガーをセットアップ
-    logger = setup_logger("finetune", str(experiment_dirs.log))
+        experiment_dirs = ExperimentDirs(
+            root=experiment_root,
+            checkpoint=checkpoint_dir,
+        )
+    else:
+        # 通常モード: タイムスタンプベースのディレクトリを新規作成
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+
+    # 設定ファイルを実験ディレクトリにコピー（まだコピーされていない場合のみ）
+    config_copy_path = experiment_dirs.root / "config.yaml"
+    if not config_copy_path.exists():
+        shutil.copy(args.config, config_copy_path)
+
+    # ロガーをセットアップ（コンソール出力のみ、run_experiments.pyがexperiment.logに保存）
+    logger = setup_logger("finetune", console_only=True)
     logger.info(f"Experiment directory: {experiment_dirs.root}")
     logger.info(f"Configuration loaded from {args.config}")
     logger.info(f"Starting fine-tuning with config: {config['model']['name']}")

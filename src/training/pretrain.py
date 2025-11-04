@@ -81,20 +81,17 @@ class ExperimentDirs:
 
     root: Path
     checkpoint: Path
-    log: Path
 
     @classmethod
     def create(cls, base_dir: Path, run_id: str) -> "ExperimentDirs":
         """実験ディレクトリを作成"""
         root = base_dir / "pretrain" / f"run_{run_id}"
         checkpoint = root / "checkpoints"
-        log = root / "logs"
 
         root.mkdir(parents=True, exist_ok=True)
         checkpoint.mkdir(exist_ok=True)
-        log.mkdir(exist_ok=True)
 
-        return cls(root=root, checkpoint=checkpoint, log=log)
+        return cls(root=root, checkpoint=checkpoint)
 
 
 def get_ssl_tasks_from_config(config: Dict[str, Any]) -> List[str]:
@@ -1130,23 +1127,20 @@ def main(args: argparse.Namespace) -> None:
     validate_config(config, mode="pretrain")
 
     # 実験ディレクトリを作成
-    # グリッドサーチ時は run_experiments.py が checkpoint.save_path と logging.log_dir を設定済み
+    # グリッドサーチ時は run_experiments.py が checkpoint.save_path を設定済み
     # その場合はそれを使用し、未設定の場合のみ新規作成
     if "checkpoint" in config and "save_path" in config["checkpoint"]:
         # run_experiments.py によって設定済み（グリッドサーチモード）
-        # run_experiments.py は exp_dir/models と exp_dir/logs を設定する
+        # run_experiments.py は exp_dir/models を設定する
         checkpoint_dir = Path(config["checkpoint"]["save_path"])
-        log_dir = Path(config.get("logging", {}).get("log_dir", checkpoint_dir.parent / "logs"))
         experiment_root = checkpoint_dir.parent  # これが exp_dir
 
         # ディレクトリを作成
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        log_dir.mkdir(parents=True, exist_ok=True)
 
         experiment_dirs = ExperimentDirs(
             root=experiment_root,  # exp_dir（実験名のディレクトリ）
             checkpoint=checkpoint_dir,  # exp_dir/models
-            log=log_dir  # exp_dir/logs
         )
     else:
         # 通常モード: タイムスタンプベースのディレクトリを新規作成
@@ -1158,8 +1152,8 @@ def main(args: argparse.Namespace) -> None:
     if not config_copy_path.exists():
         shutil.copy(args.config, config_copy_path)
 
-    # ロガーをセットアップ
-    logger = setup_logger("pretrain", str(experiment_dirs.log))
+    # ロガーをセットアップ（コンソール出力のみ、run_experiments.pyがexperiment.logに保存）
+    logger = setup_logger("pretrain", console_only=True)
     logger.info(f"Experiment directory: {experiment_dirs.root}")
     logger.info(f"Configuration loaded from {args.config}")
     logger.info(f"Starting pre-training with config: {config['model']['name']}")

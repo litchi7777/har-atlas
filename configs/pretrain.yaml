@@ -65,11 +65,6 @@ early_stopping:
   patience: 20    # 改善が見られないエポック数
   min_delta: 0.001  # 改善と見なす最小変化量
 
-# Logging
-logging:
-  log_interval: 10
-  log_dir: "logs/pretrain"
-
 # Weights & Biases
 wandb:
   enabled: true

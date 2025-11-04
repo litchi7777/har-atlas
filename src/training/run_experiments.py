@@ -148,7 +148,11 @@ def generate_grid_experiments(base_config, grid_params):
                     path_parts = value.replace("\\", "/").split("/")
                     # checkpoint_epoch_N.pth のようなファイル名を抽出
                     if path_parts[-1].endswith(".pth"):
-                        value_str = Path(value).stem  # 拡張子なしのファイル名
+                        # 親ディレクトリ名（run_YYYYMMDD_HHMMSS等）とファイル名を結合
+                        # 例: run_20251030_052930_checkpoint_epoch_100
+                        parent_dir = path_parts[-3] if len(path_parts) >= 3 else ""
+                        filename = Path(value).stem  # 拡張子なしのファイル名
+                        value_str = f"{parent_dir}_{filename}" if parent_dir else filename
                     else:
                         # ディレクトリの場合は最後の2つの部分を使用
                         value_str = "_".join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]

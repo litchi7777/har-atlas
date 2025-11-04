@@ -89,6 +89,69 @@ def deep_update(base_dict, update_dict):
     return result
 
 
+def _get_common_prefix_suffix(strings):
+    """
+    文字列リストから共通の接頭辞と接尾辞を取得
+
+    Args:
+        strings: 文字列のリスト
+
+    Returns:
+        (common_prefix, common_suffix)のタプル
+    """
+    if not strings or len(strings) == 1:
+        return "", ""
+
+    # 共通接頭辞を見つける
+    common_prefix = ""
+    for chars in zip(*strings):
+        if len(set(chars)) == 1:
+            common_prefix += chars[0]
+        else:
+            break
+
+    # 共通接尾辞を見つける
+    common_suffix = ""
+    for chars in zip(*[s[::-1] for s in strings]):
+        if len(set(chars)) == 1:
+            common_suffix = chars[0] + common_suffix
+        else:
+            break
+
+    return common_prefix, common_suffix
+
+
+def _remove_common_parts(value_str, all_value_strs):
+    """
+    複数の値から共通部分を削除して差分のみを残す
+
+    Args:
+        value_str: 処理対象の値文字列
+        all_value_strs: 全ての値文字列のリスト
+
+    Returns:
+        共通部分を削除した文字列
+    """
+    if len(all_value_strs) <= 1:
+        return value_str
+
+    prefix, suffix = _get_common_prefix_suffix(all_value_strs)
+
+    # 接頭辞と接尾辞を削除
+    result = value_str
+    if prefix and result.startswith(prefix):
+        result = result[len(prefix):]
+    if suffix and result.endswith(suffix):
+        result = result[:-len(suffix)]
+
+    # 空になった場合、または極端に短くなった場合は元の値を返す
+    # 例: "0.001" -> "0" は情報が失われすぎるので元の値を使う
+    if not result or len(result) < 2:
+        return value_str
+
+    return result
+
+
 def generate_grid_experiments(base_config, grid_params):
     """
     Generate experiments from grid search parameters
@@ -121,6 +184,34 @@ def generate_grid_experiments(base_config, grid_params):
     for param_path, values in flat_params:
         param_names.append(param_path)
         param_values.append(values if isinstance(values, list) else [values])
+
+    # 各パラメータの全ての値を収集（共通部分削除のため）
+    all_value_strings = {}  # param_name -> [value_str1, value_str2, ...]
+    for param_idx, values in enumerate(param_values):
+        param_name = param_names[param_idx]
+        value_strs = []
+
+        for value in values:
+            # 値を文字列に変換（実験名生成と同じロジック）
+            if isinstance(value, str) and len(str(value)) > 30:
+                if value is None or value == "null":
+                    value_str = "null"
+                elif "/" in value or "\\" in value:
+                    path_parts = value.replace("\\", "/").split("/")
+                    if path_parts[-1].endswith(".pth"):
+                        parent_dir = path_parts[-3] if len(path_parts) >= 3 else ""
+                        filename = Path(value).stem
+                        value_str = f"{parent_dir}_{filename}" if parent_dir else filename
+                    else:
+                        value_str = "_".join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]
+                else:
+                    value_str = str(value)[:30]
+            else:
+                value_str = str(value)
+
+            value_strs.append(value_str)
+
+        all_value_strings[param_name] = value_strs
 
     # Generate all combinations
     for idx, combination in enumerate(product(*param_values)):
@@ -162,6 +253,36 @@ def generate_grid_experiments(base_config, grid_params):
             else:
                 value_str = str(value)
 
+            # 共通部分を削除（複数の値がある場合のみ）
+            all_strs = all_value_strings[param_path]
+            if len(all_strs) > 1:
+                # チェックポイントパスの場合は特別処理（エポック番号を抽出）
+                if "checkpoint_epoch_" in value_str:
+                    import re
+                    # 全てのチェックポイントパスから抽出されたエポック番号をチェック
+                    epochs = []
+                    for s in all_strs:
+                        match = re.search(r'checkpoint_epoch_(\d+)', s)
+                        if match:
+                            epochs.append(match.group(1))
+
+                    # 全てのエポックが同じ場合、runディレクトリ名を使用
+                    if len(set(epochs)) == 1:
+                        # "run_20251030_052930_checkpoint_epoch_100" -> "20251030_052930"
+                        # runディレクトリ部分を抽出
+                        run_match = re.match(r'(.+?)_checkpoint_epoch', value_str)
+                        if run_match:
+                            value_str = run_match.group(1)
+                    else:
+                        # エポックが異なる場合、エポック番号のみ使用
+                        match = re.search(r'checkpoint_epoch_(\d+)', value_str)
+                        if match:
+                            value_str = f"ep{match.group(1)}"
+                elif all(any(c.isdigit() for c in s) for s in all_strs) and not all('.' in s for s in all_strs):
+                    # 全ての値に数字が含まれていて、小数点がない場合のみ共通部分を削除
+                    # 小数点がある場合（学習率等）は元の値を使う
+                    value_str = _remove_common_parts(value_str, all_strs)
+
             exp_name_parts.append(f"{keys[-1]}={value_str}")
 
         exp_name = "_".join(exp_name_parts)
@@ -189,6 +310,9 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
     Returns:
         Dictionary with experiment results
     """
+    # script_pathからfinetuneかpretrainかを判定
+    is_finetune = "finetune" in script_path
+
     gpu_str = f" (GPU {gpu_id})" if gpu_id is not None else ""
     print(f"\n{'='*80}")
     print(f"Running experiment: {exp_name}{gpu_str}")
@@ -199,7 +323,8 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
     os.makedirs(exp_dir, exist_ok=True)
 
     # Update config paths
-    if "checkpoint" in config:
+    # Pretrainのみcheckpoint.save_pathを設定（finetuneは不要）
+    if "checkpoint" in config and not is_finetune:
         config["checkpoint"]["save_path"] = os.path.join(exp_dir, "models")
 
     # Update W&B run name and group if enabled
@@ -229,9 +354,6 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
 
     # ログファイルのパス
     log_file = os.path.join(exp_dir, "experiment.log")
-
-    # script_pathからfinetuneかpretrainかを判定
-    is_finetune = "finetune" in script_path
 
     try:
         if is_finetune:

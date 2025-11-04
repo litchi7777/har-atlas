@@ -109,18 +109,15 @@ class ExperimentDirs:
     """実験ディレクトリ構造を保持するデータクラス"""
 
     root: Path
-    checkpoint: Path
 
     @classmethod
     def create(cls, base_dir: Path, run_id: str) -> "ExperimentDirs":
         """実験ディレクトリを作成"""
         root = base_dir / "finetune" / f"run_{run_id}"
-        checkpoint = root / "checkpoints"
 
         root.mkdir(parents=True, exist_ok=True)
-        checkpoint.mkdir(exist_ok=True)
 
-        return cls(root=root, checkpoint=checkpoint)
+        return cls(root=root)
 
 
 @dataclass
@@ -680,24 +677,10 @@ def main(args: argparse.Namespace) -> None:
     validate_config(config, mode="finetune")
 
     # 実験ディレクトリを作成
-    # グリッドサーチ時は run_experiments.py が checkpoint.save_path を設定済み
-    # その場合はそれを使用し、未設定の場合のみ新規作成
-    if "checkpoint" in config and "save_path" in config["checkpoint"]:
-        # run_experiments.py によって設定済み（グリッドサーチモード）
-        checkpoint_dir = Path(config["checkpoint"]["save_path"])
-        experiment_root = checkpoint_dir.parent  # これが exp_dir
-
-        # ディレクトリを作成
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-        experiment_dirs = ExperimentDirs(
-            root=experiment_root,
-            checkpoint=checkpoint_dir,
-        )
-    else:
-        # 通常モード: タイムスタンプベースのディレクトリを新規作成
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+    # グリッドサーチ時は run_experiments.py が実験ディレクトリ名を設定済み
+    # 通常はタイムスタンプベースのディレクトリを新規作成
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
 
     # 設定ファイルを実験ディレクトリにコピー（まだコピーされていない場合のみ）
     config_copy_path = experiment_dirs.root / "config.yaml"

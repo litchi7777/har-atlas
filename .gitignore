@@ -117,6 +117,7 @@ cython_debug/
 .DS_Store
 .AppleDouble
 .LSOverride
+__MACOSX/
 
 # Windows
 Thumbs.db

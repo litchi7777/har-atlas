@@ -36,7 +36,7 @@ from src.data.augmentations import (
 )
 from src.data.batch_dataset import MultiTaskSubjectWiseLoader, SubjectWiseLoader
 from src.losses import IntegratedSSLLoss
-from src.models.sensor_models import IntegratedSSLModel, Resnet
+from src.models.backbones import IntegratedSSLModel, Resnet
 from src.utils.common import count_parameters, get_device, save_checkpoint, set_seed
 from src.utils.config import load_config, validate_config
 from src.utils.logger import setup_logger

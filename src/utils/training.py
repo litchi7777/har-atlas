@@ -177,12 +177,22 @@ def init_wandb(config: Dict[str, Any], model: nn.Module) -> bool:
         )
         return False
 
+    # グループ名の自動生成（指定がない場合）
+    group = wandb_config.get("group")
+    if group is None or group == "":
+        from datetime import datetime
+        job_type = wandb_config.get("job_type", "experiment")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        group = f"{job_type}_{timestamp}"
+        logger.info(f"Auto-generated W&B group: {group}")
+
     try:
         wandb.init(
             project=wandb_config.get("project", "har-foundation"),
             entity=wandb_config.get("entity"),
             name=wandb_config.get("name"),
-            group=wandb_config.get("group"),  # Grid search run IDでグループ化
+            group=group,  # Grid search run IDでグループ化（自動生成対応）
+            job_type=wandb_config.get("job_type"),
             tags=wandb_config.get("tags", []),
             notes=wandb_config.get("notes"),
             config=config,

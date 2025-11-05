@@ -6,13 +6,13 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-  datasets: ["mhealth"]  # 使用するデータセット名
+  datasets: ["dsads"]  # 使用するデータセット名
 
   # バッチローダー設定
   batch_loader:
     exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
     sample_threshold: 50  # 使用しないが、バリデーションのため保持
-    batch_size: 64  # バッチサイズ
+    batch_size: 1024  # バッチサイズ
 
   # ユーザー分割設定
   user_split:
@@ -67,10 +67,12 @@ evaluation:
 wandb:
   enabled: true
   project: "har-foundation"
-  entity: null  # Your W&B username or team name
-  name: null  # Run name (auto-generated if null)
-  tags: ["finetune", "classification"]
-  notes: "Supervised fine-tuning"
+  group: null  # 自動生成（job_type + タイムスタンプ）。手動設定も可能
+  job_type: "finetune"
+  entity: null
+  name: null
+  tags: []
+  notes: null
 
 # Early Stopping
 early_stopping:
@@ -82,9 +84,18 @@ seed: 42
 
 # Grid Search
 grid_search:
+  sensor_data:
+    datasets:
+      - ["dsads"]      # DSADSのみ
+      - ["openpack"]   # OpenPackのみ
+      - ["mhealth"]    # MHEALTHのみ
+      - ["pamap2"]     # PAMAP2のみ
   model:
     pretrained_path:
-      - "experiments/pretrain/run_20251030_052930/checkpoints/checkpoint_epoch_100.pth"  # epoch 100 (new)
+      - null  # ランダム初期化（事前学習なし）
+      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp']/models/checkpoint_epoch_93.pth"
+      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['masking_time_channel']/models/checkpoint_epoch_97.pth"
+      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp', 'masking_time_channel']/models/checkpoint_epoch_97.pth"
 
 settings:
   stop_on_error: false

@@ -85,11 +85,9 @@ models/checkpoints/*
 !models/checkpoints/.gitkeep
 
 # Logs and outputs
-logs/
 *.log
 mlruns/
 runs/
-tensorboard/
 wandb/
 outputs/
 

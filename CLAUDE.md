@@ -11,9 +11,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **技術スタック**:
 - PyTorch 2.0+
 - Weights & Biases (実験追跡)
-- TensorBoard (ログ可視化)
 
 Repository: `git@github.com:litchi7777/har-foundation.git`
+
+---
+
+# 新しいデータセットの追加
+
+新しいHARデータセットをプロジェクトに追加する際は、**必ず**以下のガイドラインを参照してください：
+
+**📖 [har-unified-dataset/ADDING_NEW_DATASET.md](har-unified-dataset/ADDING_NEW_DATASET.md)**
+
+このガイドには以下が含まれます：
+- データセット理解のための必須情報チェックリスト
+- データセット追加の5ステップ
+- 実装の詳細（リサンプリング、ウィンドウ化、スケーリング）
+- 重要な設計原則（単位統一、ディレクトリ構造、ラベル処理）
+- AI実装時の特別な注意事項
+- トラブルシューティングガイド
+
+**重要**: 既存の実装（dsads.py、mhealth.py）を**必ず参照**し、パターンに忠実に従ってください。推測や創作は避けてください。
 
 ---
 
@@ -190,11 +207,12 @@ grid_search:
 ### ログと可視化
 
 ```bash
-# TensorBoard起動
-tensorboard --logdir logs/
-
 # 実験結果の確認（複数実験実行後）
 cat experiments/run_*/summary.json
+
+# 実験ログの確認
+cat experiments/pretrain/run_*/ssl_tasks=*/experiment.log
+cat experiments/finetune/run_*/experiment.log
 ```
 
 ### テストとコード品質
@@ -350,9 +368,9 @@ DATASETS = {
 
 ### 実験追跡
 
-- **ローカル**: TensorBoard（`logs/`）
-- **クラウド**: Weights & Biases
-- **複数実験**: JSON summary（`experiments/run_*/summary.json`）
+- **Weights & Biases**: リアルタイム実験追跡（オプション）
+- **実験ログ**: `experiments/run_*/experiment.log`
+- **複数実験サマリー**: `experiments/run_*/summary.json`
 
 すべてのメトリクス、ハイパーパラメータ、モデルチェックポイントが追跡可能。
 

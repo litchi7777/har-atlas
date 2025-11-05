@@ -27,7 +27,7 @@ sys.path.insert(0, str(project_root))
 
 from src.data.augmentations import get_augmentation_pipeline
 from src.data.batch_dataset import InMemoryDataset
-from src.models.sensor_models import SensorClassificationModel
+from src.models.backbones import SensorClassificationModel
 
 # har-unified-datasetサブモジュールをパスに追加
 har_dataset_path = project_root / "har-unified-dataset"
@@ -334,11 +334,20 @@ def get_num_classes_from_labels(dataset_labels: Dict[str, Dict[int, str]]) -> in
 
     Returns:
         クラス数（負のラベルは除外）
+
+    Note:
+        各データセットの最大ラベルIDを使用してクラス数を計算します。
+        複数データセットがある場合は、最大値を取ります。
+        例: DSADS (0-18) → 19クラス, OPENPACK (0-9) → 10クラス
     """
-    all_labels = set()
+    max_label = -1
     for labels in dataset_labels.values():
-        all_labels.update([k for k in labels.keys() if k >= 0])
-    return len(all_labels)
+        valid_labels = [k for k in labels.keys() if k >= 0]
+        if valid_labels:
+            max_label = max(max_label, max(valid_labels))
+
+    # クラス数 = 最大ラベルID + 1 (0-indexedのため)
+    return max_label + 1 if max_label >= 0 else 0
 
 
 def get_input_shape(dataset: InMemoryDataset) -> Tuple[int, int]:

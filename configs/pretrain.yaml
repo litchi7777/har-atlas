@@ -49,6 +49,7 @@ training:
   optimizer: "adam"
   scheduler: "cosine"
   warmup_epochs: 10
+  eta_min: 0.0005  # 最小学習率（初期値の1/2）
   grad_clip_norm: 1.0  # 勾配クリッピング（1.0推奨、無効化する場合はnull）
 
 # Hardware
@@ -69,7 +70,12 @@ early_stopping:
 wandb:
   enabled: true
   project: "har-foundation"
-  tags: ["pretrain", "multitask"]
+  group: null  # 自動生成（job_type + タイムスタンプ）。手動設定も可能
+  job_type: "pretrain"
+  entity: null
+  name: null
+  tags: []
+  notes: null
 
 # Seed
 seed: 42

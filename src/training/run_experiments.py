@@ -7,6 +7,7 @@ import sys
 import argparse
 import json
 import copy
+import signal
 from pathlib import Path
 from datetime import datetime
 from itertools import product
@@ -16,9 +17,37 @@ from typing import List, Dict, Any
 
 import yaml
 
+# Global executor reference for signal handling
+_executor = None
+_futures = []
+
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
+
+
+def signal_handler(signum, frame):
+    """
+    シグナルハンドラー（Ctrl+C等）
+    全ての実行中の実験を停止する
+    """
+    print("\n\n" + "="*80)
+    print("Interrupt received (Ctrl+C). Stopping all experiments...")
+    print("="*80 + "\n")
+
+    global _executor, _futures
+
+    # 全てのfutureをキャンセル
+    if _futures:
+        for future in _futures:
+            future.cancel()
+
+    # Executorをシャットダウン
+    if _executor:
+        _executor.shutdown(wait=False, cancel_futures=True)
+
+    print("All experiments stopped.")
+    sys.exit(0)
 
 
 def get_available_gpus(memory_threshold: int = 10000) -> List[int]:
@@ -356,6 +385,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
     log_file = os.path.join(exp_dir, "experiment.log")
 
     try:
+        # プロセスグループを作成して、終了時に全てのサブプロセスも確実に終了させる
         if is_finetune:
             # finetuneの場合は標準出力に直接表示
             result = subprocess.run(
@@ -363,6 +393,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
                 text=True,
                 check=True,
                 env=env,
+                start_new_session=True,  # 新しいセッションを開始
             )
         else:
             # pretrainの場合はログファイルに保存
@@ -374,6 +405,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
                     text=True,
                     check=True,
                     env=env,
+                    start_new_session=True,  # 新しいセッションを開始
                 )
 
         end_time = datetime.now()
@@ -484,38 +516,53 @@ def main(args):
             print(f"  Max workers: {max_workers}\n")
 
     if parallel:
-        # 並列実行
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # GPU割り当てを循環させる
-            futures = {}
-            for i, exp in enumerate(experiments):
-                gpu_id = available_gpus[i % len(available_gpus)]
-                future = executor.submit(
-                    run_experiment,
-                    exp["name"],
-                    exp["config"],
-                    args.script,
-                    experiment_dir,
-                    gpu_id,
-                    run_id  # Grid search run IDを渡す
-                )
-                futures[future] = (i + 1, exp["name"], gpu_id)
+        # シグナルハンドラーを登録（Ctrl+C対応）
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
-            # 完了した実験から結果を収集
-            for future in as_completed(futures):
-                exp_num, exp_name, gpu_id = futures[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                    print(f"\n[{exp_num}/{len(experiments)}] Experiment '{exp_name}' on GPU {gpu_id}: {result['status']}")
-                except Exception as e:
-                    print(f"\n[{exp_num}/{len(experiments)}] Experiment '{exp_name}' raised an exception: {e}")
-                    results.append({
-                        "name": exp_name,
-                        "status": "failed",
-                        "error": str(e),
-                        "gpu_id": gpu_id,
-                    })
+        # 並列実行
+        global _executor, _futures
+
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                _executor = executor
+
+                # GPU割り当てを循環させる
+                futures = {}
+                for i, exp in enumerate(experiments):
+                    gpu_id = available_gpus[i % len(available_gpus)]
+                    future = executor.submit(
+                        run_experiment,
+                        exp["name"],
+                        exp["config"],
+                        args.script,
+                        experiment_dir,
+                        gpu_id,
+                        run_id  # Grid search run IDを渡す
+                    )
+                    futures[future] = (i + 1, exp["name"], gpu_id)
+
+                _futures = list(futures.keys())
+
+                # 完了した実験から結果を収集
+                for future in as_completed(futures):
+                    exp_num, exp_name, gpu_id = futures[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        print(f"\n[{exp_num}/{len(experiments)}] Experiment '{exp_name}' on GPU {gpu_id}: {result['status']}")
+                    except Exception as e:
+                        print(f"\n[{exp_num}/{len(experiments)}] Experiment '{exp_name}' raised an exception: {e}")
+                        results.append({
+                            "name": exp_name,
+                            "status": "failed",
+                            "error": str(e),
+                            "gpu_id": gpu_id,
+                        })
+        except KeyboardInterrupt:
+            print("\n\nKeyboardInterrupt received. Cleaning up...")
+            # signal_handlerが呼ばれるのでここでは何もしない
+            raise
     else:
         # 順次実行（既存の動作）
         for i, exp in enumerate(experiments, 1):

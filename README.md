@@ -46,8 +46,7 @@ har-foundation/
 │   └── utils/               # ユーティリティ
 │       ├── logger.py        # ロギング
 │       └── metrics.py       # 評価メトリクス
-├── logs/                     # ログファイル
-├── experiments/              # 実験結果
+├── experiments/              # 実験結果とログ
 ├── __test__/                 # テストコード
 ├── requirements.txt          # 依存関係
 ├── .gitignore
@@ -283,14 +282,15 @@ python train.py finetune
 
 ## 実験追跡
 
-### TensorBoard
+### 実験ログの確認
 
 ```bash
-# TensorBoardを起動
-tensorboard --logdir logs/
+# 実験結果サマリー
+cat experiments/run_*/summary.json
 
-# ブラウザでアクセス
-# http://localhost:6006
+# 詳細ログ
+cat experiments/pretrain/run_*/ssl_tasks=*/experiment.log
+cat experiments/finetune/run_*/experiment.log
 ```
 
 ### Weights & Biases

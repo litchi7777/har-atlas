@@ -896,3 +896,225 @@ def get_sensor_model(model_name: str, in_channels: int, num_classes: int, **kwar
         return model
     else:
         raise ValueError(f"Unknown model: {model_name}")
+"""
+マルチデバイス対応エンコーダーモデル
+backbones.pyに追加するコード
+"""
+
+import torch
+import torch.nn as nn
+from typing import Optional, List
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class MultiDeviceSensorClassificationModel(nn.Module):
+    """
+    マルチデバイス対応のセンサー分類モデル
+
+    各デバイス（装着部位）ごとに独立したエンコーダーを持ち、
+    それぞれの特徴量を結合して分類する。
+    任意の数のデバイスに対応（1つ、3つ、5つなど）。
+
+    Architecture:
+        - Device 1 → Encoder 1 → features_1
+        - Device 2 → Encoder 2 → features_2
+        - ...
+        - Device N → Encoder N → features_N
+        - Concat([features_1, features_2, ..., features_N]) → Classification Head → Output
+
+    Args:
+        num_devices: デバイス数（1, 3, 5など）
+        in_channels: 各デバイスの入力チャネル数（通常3: x, y, z軸）
+        num_classes: 分類クラス数
+        backbone: バックボーンアーキテクチャ（'resnet', 'simple_cnn'など）
+        pretrained_path: 事前学習済みモデルのパス（全エンコーダーに同じ重みを適用）
+        freeze_backbone: エンコーダーを凍結するか
+        device_names: デバイス名のリスト（ログ用、オプション）
+    """
+
+    def __init__(
+        self,
+        num_devices: int,
+        in_channels: int,
+        num_classes: int,
+        backbone: str = "resnet",
+        pretrained_path: Optional[str] = None,
+        freeze_backbone: bool = False,
+        device_names: Optional[List[str]] = None,
+    ):
+        super().__init__()
+
+        if num_devices < 1:
+            raise ValueError(f"num_devices must be >= 1, got {num_devices}")
+
+        self.num_devices = num_devices
+        self.in_channels = in_channels
+        self.num_classes = num_classes
+        self.backbone_name = backbone
+        self.device_names = device_names or [f"Device{i}" for i in range(num_devices)]
+
+        # 各デバイス用のエンコーダーを作成
+        self.encoders = nn.ModuleList()
+        for i in range(num_devices):
+            encoder = self._create_encoder(in_channels, backbone)
+            self.encoders.append(encoder)
+
+        # エンコーダー出力の次元数を取得
+        with torch.no_grad():
+            dummy_input = torch.randn(1, in_channels, 150)  # 仮の入力
+            encoder_output = self.encoders[0](dummy_input)
+            self.encoder_dim = encoder_output.shape[1]
+
+        # 結合後の特徴量次元数
+        combined_dim = self.encoder_dim * num_devices
+
+        # 分類ヘッド
+        self.classifier = nn.Sequential(
+            nn.Linear(combined_dim, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, num_classes),
+        )
+
+        # 事前学習済み重みのロード（全エンコーダーに同じ重みを適用）
+        if pretrained_path:
+            self._load_pretrained_weights(pretrained_path)
+
+        # バックボーン凍結
+        if freeze_backbone:
+            for encoder in self.encoders:
+                for param in encoder.parameters():
+                    param.requires_grad = False
+
+        logger.info(
+            f"Created MultiDeviceSensorClassificationModel: "
+            f"{num_devices} devices, {backbone} backbone, "
+            f"encoder_dim={self.encoder_dim}, combined_dim={combined_dim}"
+        )
+
+    def _create_encoder(self, in_channels: int, backbone: str) -> nn.Module:
+        """エンコーダーを作成"""
+        if backbone == "resnet":
+            from src.models.backbones import Resnet
+            encoder = Resnet(in_channels=in_channels, num_classes=10)
+            # 最後の分類層を削除してエンコーダーとして使用
+            encoder = nn.Sequential(*list(encoder.children())[:-1])
+        elif backbone == "simple_cnn":
+            from src.models.backbones import SimpleCNN
+            encoder = SimpleCNN(in_channels=in_channels, num_classes=10)
+            # 最後の分類層を削除
+            encoder = nn.Sequential(*list(encoder.children())[:-1])
+        else:
+            raise ValueError(f"Unknown backbone: {backbone}")
+
+        return encoder
+
+    def _load_pretrained_weights(self, pretrained_path: str):
+        """事前学習済み重みを全エンコーダーにロード"""
+        logger.info(f"Loading pretrained weights from {pretrained_path}")
+
+        try:
+            checkpoint = torch.load(pretrained_path, map_location="cpu")
+
+            # チェックポイントの形式を確認
+            if "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+            elif "state_dict" in checkpoint:
+                state_dict = checkpoint["state_dict"]
+            else:
+                state_dict = checkpoint
+
+            # エンコーダーの重みを抽出
+            encoder_weights = {}
+            for key, value in state_dict.items():
+                # "encoder."で始まるキーを探す
+                if key.startswith("encoder."):
+                    new_key = key.replace("encoder.", "")
+                    encoder_weights[new_key] = value
+                # "backbone."で始まる場合もある
+                elif key.startswith("backbone."):
+                    new_key = key.replace("backbone.", "")
+                    encoder_weights[new_key] = value
+
+            if not encoder_weights:
+                logger.warning(
+                    "No encoder weights found in checkpoint. "
+                    "Attempting to load directly..."
+                )
+                encoder_weights = state_dict
+
+            # 全エンコーダーに同じ重みをロード
+            loaded_count = 0
+            for i, encoder in enumerate(self.encoders):
+                result = encoder.load_state_dict(encoder_weights, strict=False)
+                if result.missing_keys or result.unexpected_keys:
+                    logger.warning(
+                        f"Encoder {i} ({self.device_names[i]}): "
+                        f"missing_keys={result.missing_keys}, "
+                        f"unexpected_keys={result.unexpected_keys}"
+                    )
+                loaded_count += 1
+
+            logger.info(
+                f"Successfully loaded pretrained weights to {loaded_count}/{self.num_devices} encoders"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to load pretrained weights: {e}")
+            raise
+
+    def forward(self, device_data_list: List[torch.Tensor]) -> torch.Tensor:
+        """
+        順伝播
+
+        Args:
+            device_data_list: [torch.Tensor, ...] 各デバイスのデータ
+                各Tensor形状: [batch_size, channels, time_steps]
+
+        Returns:
+            output: [batch_size, num_classes] 分類スコア
+        """
+        if len(device_data_list) != self.num_devices:
+            raise ValueError(
+                f"Expected {self.num_devices} device inputs, "
+                f"got {len(device_data_list)}"
+            )
+
+        # 各デバイスのデータをエンコード
+        features_list = []
+        for i, (encoder, device_data) in enumerate(zip(self.encoders, device_data_list)):
+            features = encoder(device_data)
+            # 特徴量をフラット化
+            features = features.view(features.size(0), -1)
+            features_list.append(features)
+
+        # 全デバイスの特徴量を結合
+        combined_features = torch.cat(features_list, dim=1)
+
+        # 分類
+        output = self.classifier(combined_features)
+
+        return output
+
+    def get_device_features(
+        self, device_data_list: List[torch.Tensor]
+    ) -> List[torch.Tensor]:
+        """
+        各デバイスの特徴量を個別に取得（解析用）
+
+        Args:
+            device_data_list: [torch.Tensor, ...] 各デバイスのデータ
+
+        Returns:
+            features_list: [torch.Tensor, ...] 各デバイスの特徴量
+        """
+        features_list = []
+        for encoder, device_data in zip(self.encoders, device_data_list):
+            with torch.no_grad():
+                features = encoder(device_data)
+                features = features.view(features.size(0), -1)
+                features_list.append(features)
+
+        return features_list

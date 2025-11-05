@@ -58,6 +58,15 @@ DATASETS = {
             10: 'Running', 11: 'JumpFrontBack'
         },
     },
+    "OPENPACK": {
+        "n_classes": 9,
+        "labels": {
+            -1: 'Undefined',  # 未定義/無操作/その他（operation=0,10）
+            0: 'Assemble', 1: 'Insert', 2: 'Put', 3: 'Walk',
+            4: 'Pick', 5: 'Scan', 6: 'Press', 7: 'Open',
+            8: 'Close'
+        },
+    },
 }
 from src.utils.common import count_parameters, get_device, set_seed
 from src.utils.config import load_config, validate_config
@@ -324,6 +333,100 @@ def collect_labeled_data_paths(
     logger.info(f"Test: {len(test_paths)} files")
 
     return train_paths, val_paths, test_paths, dataset_labels
+
+
+def collect_multi_device_data_paths(
+    data_root: str,
+    datasets: List[str],
+    device_locations: List[str],
+    exclude_patterns: List[str],
+    test_users: List[str],
+    val_users: List[str],
+    logger,
+) -> Tuple[
+    Dict[str, List[Tuple[str, str]]],
+    Dict[str, List[Tuple[str, str]]],
+    Dict[str, List[Tuple[str, str]]],
+    Dict[str, Dict[int, str]],
+]:
+    """マルチデバイス対応：デバイスごとにデータパスを収集してtrain/val/testに分割
+
+    Args:
+        data_root: データルートディレクトリ
+        datasets: データセット名のリスト
+        device_locations: デバイス部位のリスト（例: ['Torso', 'RightArm', 'LeftArm']）
+        exclude_patterns: 除外パターン
+        test_users: テスト用ユーザーID
+        val_users: 検証用ユーザーID
+        logger: ロガー
+
+    Returns:
+        (train_paths_per_device, val_paths_per_device, test_paths_per_device, dataset_labels):
+            - train/val/test_paths_per_device: {device_name: [(X.npy, Y.npy), ...]}
+            - dataset_labels: {dataset_name: {label_id: label_name}}
+    """
+    train_paths_per_device = {device: [] for device in device_locations}
+    val_paths_per_device = {device: [] for device in device_locations}
+    test_paths_per_device = {device: [] for device in device_locations}
+    dataset_labels = {}
+
+    for dataset_name in datasets:
+        dataset_name_lower = dataset_name.lower()
+        dataset_name_upper = dataset_name.upper()
+
+        # データセット情報からラベルを取得
+        if dataset_name_upper in DATASETS:
+            dataset_labels[dataset_name_upper] = DATASETS[dataset_name_upper]["labels"]
+        else:
+            logger.warning(f"Dataset {dataset_name_upper} not found in DATASETS metadata")
+
+        # 各デバイスについてデータを収集
+        for device in device_locations:
+            # パターン: data_root/dataset/USER*/device/ACC/X.npy
+            pattern = f"{data_root}/{dataset_name_lower}/*/{device}/ACC/X.npy"
+            x_paths = sorted(glob.glob(pattern))
+
+            # 除外パターンを適用
+            for exclude in exclude_patterns:
+                x_paths = [p for p in x_paths if exclude not in p]
+
+            # 各X.npyに対応するY.npyを探す
+            for x_path in x_paths:
+                y_path = x_path.replace("/X.npy", "/Y.npy")
+                if not Path(y_path).exists():
+                    continue
+
+                # ユーザーIDを抽出（例: USER00001 -> 1）
+                user_match = Path(x_path).parts
+                user_dir = [p for p in user_match if p.startswith("USER")]
+                if not user_dir:
+                    continue
+
+                user_id = user_dir[0].replace("USER", "").lstrip("0") or "0"
+
+                # train/val/test に分割
+                if user_id in test_users:
+                    test_paths_per_device[device].append((x_path, y_path))
+                elif user_id in val_users:
+                    val_paths_per_device[device].append((x_path, y_path))
+                else:
+                    train_paths_per_device[device].append((x_path, y_path))
+
+            logger.info(
+                f"Dataset '{dataset_name}', Device '{device}': "
+                f"{len([p for p in x_paths if Path(p.replace('/X.npy', '/Y.npy')).exists()])} files"
+            )
+
+    # 統計情報をログ
+    for device in device_locations:
+        logger.info(
+            f"Device '{device}': "
+            f"Train={len(train_paths_per_device[device])}, "
+            f"Val={len(val_paths_per_device[device])}, "
+            f"Test={len(test_paths_per_device[device])}"
+        )
+
+    return train_paths_per_device, val_paths_per_device, test_paths_per_device, dataset_labels
 
 
 def get_num_classes_from_labels(dataset_labels: Dict[str, Dict[int, str]]) -> int:

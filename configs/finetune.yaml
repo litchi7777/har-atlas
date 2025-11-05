@@ -86,10 +86,10 @@ seed: 42
 grid_search:
   sensor_data:
     datasets:
-      - ["dsads"]      # DSADSのみ
+      #- ["dsads"]      # DSADSのみ
       - ["openpack"]   # OpenPackのみ
-      - ["mhealth"]    # MHEALTHのみ
-      - ["pamap2"]     # PAMAP2のみ
+      #- ["mhealth"]    # MHEALTHのみ
+      #- ["pamap2"]     # PAMAP2のみ
   model:
     pretrained_path:
       - null  # ランダム初期化（事前学習なし）

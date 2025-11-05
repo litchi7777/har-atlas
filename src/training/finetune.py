@@ -685,15 +685,23 @@ def main(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     validate_config(config, mode="finetune")
 
-    # 実験ディレクトリを作成
-    # グリッドサーチ時は run_experiments.py が実験ディレクトリ名を設定済み
-    # 通常はタイムスタンプベースのディレクトリを新規作成
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+    # 実験ディレクトリを判定・作成
+    # run_experiments.py から呼ばれた場合: 設定ファイルが実験ディレクトリ内にある
+    # 直接呼ばれた場合: configs/ 内の設定ファイルを使用
+    config_path = Path(args.config)
 
-    # 設定ファイルを実験ディレクトリにコピー（まだコピーされていない場合のみ）
-    config_copy_path = experiment_dirs.root / "config.yaml"
-    if not config_copy_path.exists():
+    if config_path.parent.name != "configs" and (config_path.parent / "config.yaml").exists():
+        # run_experiments.py から呼ばれた場合
+        # 設定ファイルが実験ディレクトリ内にあるので、そのディレクトリを使用
+        experiment_dirs = ExperimentDirs(root=config_path.parent)
+    else:
+        # 直接呼ばれた場合
+        # 新しい実験ディレクトリを作成
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dirs = ExperimentDirs.create(Path("experiments"), run_id)
+
+        # 設定ファイルを実験ディレクトリにコピー
+        config_copy_path = experiment_dirs.root / "config.yaml"
         shutil.copy(args.config, config_copy_path)
 
     # ロガーをセットアップ（コンソール出力のみ、run_experiments.pyがexperiment.logに保存）

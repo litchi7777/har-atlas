@@ -26,8 +26,8 @@ project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 from src.data.augmentations import get_augmentation_pipeline
-from src.data.batch_dataset import InMemoryDataset
-from src.models.backbones import SensorClassificationModel
+from src.data.batch_dataset import InMemoryDataset, MultiDeviceInMemoryDataset
+from src.models.backbones import SensorClassificationModel, MultiDeviceSensorClassificationModel
 
 # har-unified-datasetサブモジュールをパスに追加
 har_dataset_path = project_root / "har-unified-dataset"
@@ -335,6 +335,68 @@ def collect_labeled_data_paths(
     return train_paths, val_paths, test_paths, dataset_labels
 
 
+def get_device_locations_from_config(
+    sensor_location: Any,
+    data_root: str,
+    datasets: List[str],
+    logger,
+) -> List[str]:
+    """sensor_location設定から使用するデバイスリストを取得
+
+    Args:
+        sensor_location: 設定値
+            - "all": 全デバイス（自動検出）
+            - "Torso": 単一デバイス
+            - ["Torso", "RightArm"]: 指定デバイスリスト
+        data_root: データルートディレクトリ
+        datasets: データセット名のリスト
+        logger: ロガー
+
+    Returns:
+        device_locations: デバイス名のリスト
+    """
+    # リストで直接指定された場合
+    if isinstance(sensor_location, list):
+        logger.info(f"Using specified devices: {sensor_location}")
+        return sensor_location
+
+    # 文字列の場合
+    if isinstance(sensor_location, str):
+        if sensor_location == "all":
+            # 全デバイスを自動検出
+            logger.info("Detecting all available devices...")
+            all_devices = set()
+
+            for dataset_name in datasets:
+                dataset_name_lower = dataset_name.lower()
+                # パターン: data_root/dataset/USER*/*/ACC/X.npy
+                pattern = f"{data_root}/{dataset_name_lower}/*/*/ACC/X.npy"
+                paths = glob.glob(pattern)
+
+                # パスからデバイス名を抽出
+                for path in paths:
+                    parts = Path(path).parts
+                    # USER* の次がデバイス名
+                    for i, part in enumerate(parts):
+                        if part.startswith("USER") and i + 1 < len(parts):
+                            device_name = parts[i + 1]
+                            all_devices.add(device_name)
+                            break
+
+            device_locations = sorted(list(all_devices))
+            logger.info(f"Detected devices: {device_locations}")
+            return device_locations
+        else:
+            # 単一デバイス名として扱う
+            logger.info(f"Using single device: {sensor_location}")
+            return [sensor_location]
+
+    raise ValueError(
+        f"Invalid sensor_location: {sensor_location}. "
+        f"Expected 'all', device name string, or list of device names."
+    )
+
+
 def collect_multi_device_data_paths(
     data_root: str,
     datasets: List[str],
@@ -441,7 +503,7 @@ def get_num_classes_from_labels(dataset_labels: Dict[str, Dict[int, str]]) -> in
     Note:
         各データセットの最大ラベルIDを使用してクラス数を計算します。
         複数データセットがある場合は、最大値を取ります。
-        例: DSADS (0-18) → 19クラス, OPENPACK (0-9) → 10クラス
+        例: DSADS (0-18) → 19クラス, OPENPACK (0-8) → 9クラス
     """
     max_label = -1
     for labels in dataset_labels.values():

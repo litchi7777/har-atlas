@@ -8,6 +8,12 @@ sensor_data:
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
   datasets: ["dsads"]  # 使用するデータセット名
 
+  # センサー装着部位の設定
+  # - "all": 全デバイス使用（マルチエンコーダーモデル）
+  # - "Torso": 単一デバイス使用（シングルエンコーダーモデル）
+  # - ["Torso", "RightArm", "LeftArm"]: 指定デバイスのみ使用（マルチエンコーダーモデル）
+  sensor_location: "all"
+
   # バッチローダー設定
   batch_loader:
     exclude_patterns: []  # 除外パターン（例: ["USER00001"]）

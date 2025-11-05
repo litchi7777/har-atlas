@@ -156,6 +156,7 @@ def train_epoch(
     device: torch.device,
     epoch: int,
     use_wandb: bool = False,
+    is_multi_device: bool = False,
 ) -> Tuple[float, float]:
     """1エポック分の学習を実行
 
@@ -167,6 +168,7 @@ def train_epoch(
         device: デバイス
         epoch: 現在のエポック
         use_wandb: W&Bへのログを有効化するか
+        is_multi_device: マルチデバイスモードか（データがリスト形式）
 
     Returns:
         (平均損失, 精度)のタプル
@@ -179,7 +181,13 @@ def train_epoch(
     pbar = tqdm(dataloader, desc=f"Training Epoch {epoch}")
 
     for batch_idx, (data, target) in enumerate(pbar):
-        data, target = data.to(device), target.to(device)
+        if is_multi_device:
+            # data is a list of tensors, one per device
+            data = [d.to(device) for d in data]
+            target = target.to(device)
+        else:
+            # data is a single tensor
+            data, target = data.to(device), target.to(device)
 
         optimizer.zero_grad()
 
@@ -196,8 +204,9 @@ def train_epoch(
         total += target.size(0)
         correct += predicted.eq(target).sum().item()
 
-        # 統計を更新
-        loss_meter.update(loss.item(), data.size(0))
+        # 統計を更新（マルチデバイスの場合は最初のデバイスからバッチサイズを取得）
+        batch_size = data[0].size(0) if is_multi_device else data.size(0)
+        loss_meter.update(loss.item(), batch_size)
         acc = 100.0 * correct / total
         pbar.set_postfix({"loss": f"{loss_meter.avg:.4f}", "acc": f"{acc:.2f}%"})
 
@@ -216,7 +225,11 @@ def train_epoch(
 
 
 def evaluate(
-    model: nn.Module, dataloader: DataLoader, criterion: nn.Module, device: torch.device
+    model: nn.Module,
+    dataloader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    is_multi_device: bool = False,
 ) -> Dict[str, float]:
     """モデルを評価
 
@@ -225,6 +238,7 @@ def evaluate(
         dataloader: データローダー
         criterion: 損失関数
         device: デバイス
+        is_multi_device: マルチデバイスモードか（データがリスト形式）
 
     Returns:
         評価メトリクス辞書
@@ -236,12 +250,20 @@ def evaluate(
 
     with torch.no_grad():
         for data, target in tqdm(dataloader, desc="Evaluating"):
-            data, target = data.to(device), target.to(device)
+            if is_multi_device:
+                # data is a list of tensors, one per device
+                data = [d.to(device) for d in data]
+                target = target.to(device)
+            else:
+                # data is a single tensor
+                data, target = data.to(device), target.to(device)
 
             output = model(data)
             loss = criterion(output, target)
 
-            loss_meter.update(loss.item(), data.size(0))
+            # バッチサイズの取得（マルチデバイスの場合は最初のデバイスから）
+            batch_size = data[0].size(0) if is_multi_device else data.size(0)
+            loss_meter.update(loss.item(), batch_size)
 
             _, predicted = output.max(1)
             all_preds.extend(predicted.cpu().numpy().tolist())
@@ -573,16 +595,38 @@ def setup_batch_dataloaders(
     logger.info(f"Val samples: {len(val_dataset)}")
     logger.info(f"Test samples: {len(test_dataset)}")
 
-    # DataLoaderを作成（通常のシャッフル）
+    # サンプル数制限の設定を取得
+    max_samples_per_epoch = config.get("training", {}).get("max_samples_per_epoch", None)
+
+    # DataLoaderを作成
     batch_size = batch_loader_config.get("batch_size", 64)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=False,
-    )
+
+    # サンプル数制限がある場合、RandomSamplerを使用
+    if max_samples_per_epoch is not None and len(train_dataset) > max_samples_per_epoch:
+        logger.info(f"Limiting training samples per epoch: {max_samples_per_epoch} (out of {len(train_dataset)})")
+        train_sampler = RandomSampler(
+            train_dataset,
+            replacement=True,  # 復元抽出（同じサンプルを複数回選択可能）
+            num_samples=max_samples_per_epoch
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            sampler=train_sampler,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
+    else:
+        # 制限なし、通常のシャッフル
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
 
     val_loader = DataLoader(
         val_dataset,
@@ -613,6 +657,135 @@ def setup_batch_dataloaders(
     return train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length
 
 
+def setup_multi_device_dataloaders(
+    config: Dict[str, Any], logger
+) -> Tuple[DataLoader, DataLoader, DataLoader, int, int, int, List[str]]:
+    """マルチデバイス対応バッチデータローダーのセットアップ
+
+    Args:
+        config: 設定辞書
+        logger: ロガー
+
+    Returns:
+        (train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length, device_locations)
+    """
+    sensor_config = config["sensor_data"]
+    batch_loader_config = sensor_config["batch_loader"]
+    user_split = sensor_config["user_split"]
+
+    logger.info("Using multi-device in-memory data loader")
+
+    # sensor_locationからデバイスリストを取得
+    device_locations = get_device_locations_from_config(
+        sensor_config.get("sensor_location", "all"),
+        sensor_config.get("data_root", DEFAULT_DATA_ROOT),
+        sensor_config.get("datasets", []),
+        logger,
+    )
+    logger.info(f"Device locations: {device_locations}")
+
+    # デバイスごとにデータパスを収集してtrain/val/testに分割
+    train_paths_per_device, val_paths_per_device, test_paths_per_device, dataset_labels = (
+        collect_multi_device_data_paths(
+            sensor_config.get("data_root", DEFAULT_DATA_ROOT),
+            sensor_config.get("datasets", []),
+            device_locations,
+            batch_loader_config.get("exclude_patterns", []),
+            user_split.get("test_users", []),
+            user_split.get("val_users", []),
+            logger,
+        )
+    )
+
+    # クラス数を計算
+    num_classes = get_num_classes_from_labels(dataset_labels)
+    logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Dataset labels: {dataset_labels}")
+
+    # データセットを作成（全データをメモリに読み込む）
+    logger.info("Loading multi-device data into memory...")
+    train_dataset = MultiDeviceInMemoryDataset(train_paths_per_device, filter_negative_labels=True)
+    val_dataset = MultiDeviceInMemoryDataset(val_paths_per_device, filter_negative_labels=True)
+    test_dataset = MultiDeviceInMemoryDataset(test_paths_per_device, filter_negative_labels=True)
+
+    logger.info(f"Train samples: {len(train_dataset)}")
+    logger.info(f"Val samples: {len(val_dataset)}")
+    logger.info(f"Test samples: {len(test_dataset)}")
+
+    # サンプル数制限の設定を取得
+    max_samples_per_epoch = config.get("training", {}).get("max_samples_per_epoch", None)
+
+    # DataLoaderを作成
+    batch_size = batch_loader_config.get("batch_size", 64)
+
+    # サンプル数制限がある場合、RandomSamplerを使用
+    if max_samples_per_epoch is not None and len(train_dataset) > max_samples_per_epoch:
+        logger.info(f"Limiting training samples per epoch: {max_samples_per_epoch} (out of {len(train_dataset)})")
+        train_sampler = RandomSampler(
+            train_dataset,
+            replacement=True,  # 復元抽出（同じサンプルを複数回選択可能）
+            num_samples=max_samples_per_epoch
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            sampler=train_sampler,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
+    else:
+        # 制限なし、通常のシャッフル
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=False,
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=False,
+    )
+
+    # 入力形状を取得（最初のデバイスのデータから）
+    sample_device_data_list, _ = train_dataset[0]
+    sample_device_data = sample_device_data_list[0]
+    in_channels = sample_device_data.shape[0]
+    sequence_length = sample_device_data.shape[1]
+
+    logger.info(f"Number of devices: {len(device_locations)}")
+    logger.info(f"Input shape per device: ({in_channels}, {sequence_length})")
+    logger.info(f"Training batches per epoch: {len(train_loader)}")
+    logger.info(f"Validation batches: {len(val_loader)}")
+    logger.info(f"Test batches: {len(test_loader)}")
+
+    return (
+        train_loader,
+        val_loader,
+        test_loader,
+        num_classes,
+        in_channels,
+        sequence_length,
+        device_locations,
+    )
+
+
 def create_model(
     config: Dict[str, Any],
     num_classes: int,
@@ -620,7 +793,7 @@ def create_model(
     device: torch.device,
     logger,
 ) -> nn.Module:
-    """モデルを作成
+    """モデルを作成（シングルデバイス）
 
     Args:
         config: 設定辞書
@@ -643,6 +816,50 @@ def create_model(
     param_info = count_parameters(model)
     logger.info(
         f"Model created: {config['model']['backbone']}, "
+        f"Total params: {param_info['total']:,}, "
+        f"Trainable: {param_info['trainable']:,}"
+    )
+
+    return model
+
+
+def create_multi_device_model(
+    config: Dict[str, Any],
+    num_classes: int,
+    in_channels: int,
+    device_locations: List[str],
+    device: torch.device,
+    logger,
+) -> nn.Module:
+    """マルチデバイスモデルを作成
+
+    Args:
+        config: 設定辞書
+        num_classes: クラス数
+        in_channels: 各デバイスの入力チャネル数
+        device_locations: デバイス部位のリスト
+        device: デバイス
+        logger: ロガー
+
+    Returns:
+        作成されたマルチデバイスモデル
+    """
+    num_devices = len(device_locations)
+
+    model = MultiDeviceSensorClassificationModel(
+        num_devices=num_devices,
+        in_channels=in_channels,
+        num_classes=num_classes,
+        backbone=config["model"].get("backbone", "resnet"),
+        pretrained_path=config["model"].get("pretrained_path"),
+        freeze_backbone=config["model"].get("freeze_backbone", False),
+        device_names=device_locations,
+    ).to(device)
+
+    param_info = count_parameters(model)
+    logger.info(
+        f"Multi-device model created: {config['model']['backbone']}, "
+        f"Devices: {num_devices} ({', '.join(device_locations)}), "
         f"Total params: {param_info['total']:,}, "
         f"Trainable: {param_info['trainable']:,}"
     )
@@ -707,6 +924,7 @@ def run_training_loop(
     use_wandb: bool,
     experiment_dirs: "ExperimentDirs",
     logger,
+    is_multi_device: bool = False,
 ) -> Dict[str, float]:
     """トレーニングループを実行
 
@@ -724,6 +942,7 @@ def run_training_loop(
         use_wandb: W&Bを使用するか
         experiment_dirs: 実験ディレクトリ
         logger: ロガー
+        is_multi_device: マルチデバイスモードか
 
     Returns:
         結果辞書 {'best_val_accuracy': float, 'test_accuracy': float, ...}
@@ -743,14 +962,14 @@ def run_training_loop(
 
         # 学習
         train_loss, train_acc = train_epoch(
-            model, train_loader, criterion, optimizer, device, epoch, use_wandb
+            model, train_loader, criterion, optimizer, device, epoch, use_wandb, is_multi_device
         )
 
         logger.info(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
 
         # 評価
         if epoch % eval_interval == 0:
-            val_metrics = evaluate(model, val_loader, criterion, device)
+            val_metrics = evaluate(model, val_loader, criterion, device, is_multi_device)
 
             log_validation_metrics(
                 epoch, train_loss, train_acc, val_metrics, optimizer, use_wandb, logger
@@ -784,7 +1003,7 @@ def run_training_loop(
     logger.info("=" * 80)
 
     # テストセットで最終評価
-    test_metrics = evaluate(model, test_loader, criterion, device)
+    test_metrics = evaluate(model, test_loader, criterion, device, is_multi_device)
 
     logger.info(f"Test Loss: {test_metrics['loss']:.4f}")
     logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
@@ -883,11 +1102,37 @@ def main(args: argparse.Namespace) -> None:
     device = get_device(config["device"])
     logger.info(f"Using device: {device}")
 
+    # sensor_location設定を確認してシングルデバイスかマルチデバイスかを判定
+    sensor_location = config.get("sensor_data", {}).get("sensor_location", None)
+    is_multi_device = False
+    device_locations = None
+
+    # マルチデバイスモードの判定条件:
+    # 1. sensor_location="all" の場合
+    # 2. sensor_locationがリストで複数要素の場合
+    if sensor_location == "all":
+        is_multi_device = True
+    elif isinstance(sensor_location, list) and len(sensor_location) > 1:
+        is_multi_device = True
+
+    logger.info(f"Mode: {'Multi-device' if is_multi_device else 'Single-device'}")
+
     # データローダーを作成
     try:
-        train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length = (
-            setup_batch_dataloaders(config, logger)
-        )
+        if is_multi_device:
+            (
+                train_loader,
+                val_loader,
+                test_loader,
+                num_classes,
+                in_channels,
+                sequence_length,
+                device_locations,
+            ) = setup_multi_device_dataloaders(config, logger)
+        else:
+            train_loader, val_loader, test_loader, num_classes, in_channels, sequence_length = (
+                setup_batch_dataloaders(config, logger)
+            )
 
         logger.info(f"Number of classes: {num_classes}")
 
@@ -896,7 +1141,12 @@ def main(args: argparse.Namespace) -> None:
         raise
 
     # モデルを作成
-    model = create_model(config, num_classes, in_channels, device, logger)
+    if is_multi_device:
+        model = create_multi_device_model(
+            config, num_classes, in_channels, device_locations, device, logger
+        )
+    else:
+        model = create_model(config, num_classes, in_channels, device, logger)
 
     # 損失関数を定義
     criterion = nn.CrossEntropyLoss(
@@ -951,6 +1201,7 @@ def main(args: argparse.Namespace) -> None:
         use_wandb,
         experiment_dirs,
         logger,
+        is_multi_device,
     )
 
     # 結果をJSONファイルに保存

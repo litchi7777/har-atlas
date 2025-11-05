@@ -14,6 +14,11 @@ sensor_data:
   # - ["Torso", "RightArm", "LeftArm"]: 指定デバイスのみ使用（マルチエンコーダーモデル）
   sensor_location: "all"
 
+  # 使用するセンサータイプ（現在はACCのみ対応）
+  # - "ACC": 加速度センサー
+  # - ["ACC", "GYRO"]: 複数センサー（将来拡張用）
+  sensor_types: ["ACC"]
+
   # バッチローダー設定
   batch_loader:
     exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
@@ -40,13 +45,14 @@ augmentation:
 
 # Training
 training:
-  epochs: 50
-  learning_rate: 0.0001  # Usually lower than pre-training
+  epochs: 200  # Early stoppingで自動調整されるため多めに設定
+  learning_rate: 0.001  # 10倍に引き上げ（0.0001 -> 0.001）
   weight_decay: 0.0001
   optimizer: "adam"
   scheduler: "step"  # step, cosine, plateau
   step_size: 20
   gamma: 0.1
+  max_samples_per_epoch: 10000  # 1エポックあたりの最大サンプル数（データ量固定、学習時間短縮）
 
 # Loss Function
 loss:
@@ -82,7 +88,7 @@ wandb:
 
 # Early Stopping
 early_stopping:
-  patience: 10
+  patience: 5  # 早めに収束判定（学習時間短縮）
   min_delta: 0.001
 
 # Seed for reproducibility

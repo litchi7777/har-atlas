@@ -961,11 +961,13 @@ class MultiDeviceSensorClassificationModel(nn.Module):
             encoder = self._create_encoder(in_channels, backbone)
             self.encoders.append(encoder)
 
-        # エンコーダー出力の次元数を取得
+        # エンコーダー出力の次元数を取得（フラット化後の次元数）
         with torch.no_grad():
             dummy_input = torch.randn(1, in_channels, 150)  # 仮の入力
             encoder_output = self.encoders[0](dummy_input)
-            self.encoder_dim = encoder_output.shape[1]
+            # フラット化後の次元数を取得
+            encoder_output_flat = encoder_output.view(encoder_output.size(0), -1)
+            self.encoder_dim = encoder_output_flat.shape[1]
 
         # 結合後の特徴量次元数
         combined_dim = self.encoder_dim * num_devices
@@ -998,7 +1000,7 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         """エンコーダーを作成"""
         if backbone == "resnet":
             from src.models.backbones import Resnet
-            encoder = Resnet(in_channels=in_channels, num_classes=10)
+            encoder = Resnet(n_channels=in_channels)
             # 最後の分類層を削除してエンコーダーとして使用
             encoder = nn.Sequential(*list(encoder.children())[:-1])
         elif backbone == "simple_cnn":

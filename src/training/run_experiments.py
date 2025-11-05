@@ -262,17 +262,29 @@ def generate_grid_experiments(base_config, grid_params):
             if isinstance(value, str) and len(str(value)) > 30:
                 # nullの場合
                 if value is None or value == "null":
-                    value_str = "null"
+                    value_str = "None"
                 # ファイルパスの場合は、親ディレクトリ名を使用
                 elif "/" in value or "\\" in value:
                     path_parts = value.replace("\\", "/").split("/")
                     # checkpoint_epoch_N.pth のようなファイル名を抽出
                     if path_parts[-1].endswith(".pth"):
-                        # 親ディレクトリ名（run_YYYYMMDD_HHMMSS等）とファイル名を結合
-                        # 例: run_20251030_052930_checkpoint_epoch_100
-                        parent_dir = path_parts[-3] if len(path_parts) >= 3 else ""
-                        filename = Path(value).stem  # 拡張子なしのファイル名
-                        value_str = f"{parent_dir}_{filename}" if parent_dir else filename
+                        # pretrained_pathの場合、SSL task名を抽出
+                        # 例: experiments/pretrain/run_20251104_082803/ssl_tasks=['masking_time_channel']/models/checkpoint_epoch_97.pth
+                        #     -> ssl_tasks=['masking_time_channel']_best_model
+                        ssl_task_dir = None
+                        for part in path_parts:
+                            if part.startswith("ssl_tasks="):
+                                ssl_task_dir = part
+                                break
+
+                        if ssl_task_dir:
+                            # ssl_tasksディレクトリ名 + best_model
+                            value_str = f"{ssl_task_dir}_best_model"
+                        else:
+                            # 従来の処理（後方互換性のため）
+                            parent_dir = path_parts[-3] if len(path_parts) >= 3 else ""
+                            filename = Path(value).stem  # 拡張子なしのファイル名
+                            value_str = f"{parent_dir}_{filename}" if parent_dir else filename
                     else:
                         # ディレクトリの場合は最後の2つの部分を使用
                         value_str = "_".join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]
@@ -481,7 +493,28 @@ def main(args):
     script_name = Path(args.script).stem  # "pretrain" or "finetune"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_id = f"{script_name}_run_{timestamp}"  # Grid search全体を識別するID
-    experiment_dir = os.path.join("experiments", script_name, f"run_{timestamp}")
+
+    # finetuneの場合、pretrained_pathからpretrainの日付を抽出
+    pretrain_suffix = ""
+    if script_name == "finetune":
+        # grid_searchからpretrained_pathを探す
+        pretrained_paths = []
+        if "model" in grid_search and "pretrained_path" in grid_search["model"]:
+            pretrained_paths = grid_search["model"]["pretrained_path"]
+
+        # nullではないpathを探す
+        valid_paths = [p for p in pretrained_paths if p is not None and p != "null"]
+
+        if valid_paths:
+            # 最初のパスからpretrainの日付を抽出
+            # 例: experiments/pretrain/run_20251104_082803/... -> 20251104_082803
+            import re
+            match = re.search(r'run_(\d{8}_\d{6})', valid_paths[0])
+            if match:
+                pretrain_date = match.group(1)
+                pretrain_suffix = f"_from_{pretrain_date}"
+
+    experiment_dir = os.path.join("experiments", script_name, f"run_{timestamp}{pretrain_suffix}")
     os.makedirs(experiment_dir, exist_ok=True)
 
     # Save experiment plan (include grid_search and settings back)

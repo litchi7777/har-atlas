@@ -86,6 +86,7 @@ models/checkpoints/*
 
 # Logs and outputs
 *.log
+logs/
 mlruns/
 runs/
 wandb/

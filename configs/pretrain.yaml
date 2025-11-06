@@ -6,13 +6,14 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-  datasets: ["openpack"]  # 使用するデータセット名
+  datasets: ["nhanes"]
+  #datasets: ["openpack"]  # 使用するデータセット名
 
   # センサー部位の設定
   # - "all": すべてのデバイスを使用（マルチデバイスモデル）
   # - ["hand"]: 特定のデバイスのみ使用（シングルデバイスモデル）
   # - ["hand", "chest"]: 複数の特定デバイスを使用（マルチデバイスモデル）
-  sensor_location: ["hand"]
+  sensor_location: ["all"]
 
   # バッチローダー設定
   batch_loader:
@@ -90,21 +91,11 @@ seed: 42
 # PAMAP2/OpenPackのデバイス × バックボーン × SSLタスク × 事前学習パスでSSL事前学習
 # 実行: python train.py pretrain
 grid_search:
-  sensor_data:
-    sensor_location:
-      - ["atr01"] 
-      - ["atr02"]
-      - ["atr03"]
-      - ["atr04"]
-  model:
-    backbone:
-      - "resnet"           # Resnet (デフォルト)
-    pretrained_path:
-      - null  # ゼロから学習
-      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp', 'masking_time_channel']/models/checkpoint_epoch_97.pth"  # 既存checkpointから継続学習
   multitask:
     ssl_tasks:
       - ["binary_permute", "binary_reverse", "binary_timewarp", "masking_time_channel"]
+      - ["binary_permute", "binary_reverse", "binary_timewarp"]
+      - ["masking_time_channel"]
 
 # OpenPackで実験する場合は、以下のように変更してください:
 # 1. datasets: ["pamap2"] -> ["openpack"] に変更

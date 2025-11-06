@@ -34,7 +34,7 @@ from src.data.augmentations import (
     TimeChannelMasking,
     get_augmentation_pipeline,
 )
-from src.data.batch_dataset import MultiTaskSubjectWiseLoader, SubjectWiseLoader
+from src.data.batch_dataset import SubjectWiseLoader
 from src.losses import IntegratedSSLLoss
 from src.models.backbones import IntegratedSSLModel, Resnet
 from src.utils.common import count_parameters, get_device, save_checkpoint, set_seed
@@ -241,17 +241,12 @@ def create_data_loaders(
     Returns:
         (train_loader, val_loader, test_loader)
     """
-    # データセットを作成
-    if use_multitask:
-        dataset = MultiTaskSubjectWiseLoader(
-            paths,
-            sample_threshold=config.sample_threshold,
-            ssl_tasks=ssl_tasks,
-            specific_transforms=specific_transforms or {},
-            apply_prob=apply_prob,
-        )
-    else:
-        dataset = SubjectWiseLoader(paths, sample_threshold=config.sample_threshold)
+    # データセットを作成（統一されたSubjectWiseLoaderを使用）
+    dataset = SubjectWiseLoader(
+        paths,
+        sample_threshold=config.sample_threshold,
+        ssl_tasks=ssl_tasks if use_multitask else None,
+    )
 
     # DataLoaderを作成（複数の被験者データを1バッチに含める）
     train_sampler = RandomSampler(
@@ -589,14 +584,12 @@ def train_epoch(
                 for i, task in enumerate(ssl_tasks):
                     task_loss_meters[i].update(task_losses[task].item(), x.size(0))
             else:
-                # 通常のSSL: (views, _)
-                views, _ = batch_data
-                view1, view2 = views[0].to(device), views[1].to(device)
+                # 通常のSSL: データを直接受け取る（統一されたデータローダー）
+                x = batch_data.to(device)
 
-                # 順伝播
-                z1, z2 = model(view1, view2)
+                # 順伝播（同じデータを2回使う）
+                z1, z2 = model(x, x)
                 loss = criterion(z1, z2)
-                x = view1  # for batch size
 
         # 逆伝播
         if use_amp:
@@ -704,14 +697,12 @@ def evaluate_epoch(
                 for i, task in enumerate(ssl_tasks):
                     task_loss_meters[i].update(task_losses[task].item(), x.size(0))
             else:
-                # 通常のSSL: (views, _)
-                views, _ = batch_data
-                view1, view2 = views[0].to(device), views[1].to(device)
+                # 通常のSSL: データを直接受け取る（統一されたデータローダー）
+                x = batch_data.to(device)
 
-                # 順伝播
-                z1, z2 = model(view1, view2)
+                # 順伝播（同じデータを2回使う）
+                z1, z2 = model(x, x)
                 loss = criterion(z1, z2)
-                x = view1  # for batch size
 
             # 統計を更新
             loss_meter.update(loss.item(), x.size(0))
@@ -753,9 +744,26 @@ def create_model(
         # 統合型SSLモデル
         ssl_tasks = get_ssl_tasks_from_config(config)
         hidden_dim = config["model"].get("feature_dim", 256)
+        backbone_name = config["model"].get("backbone", "resnet")
 
         # バックボーンを作成
-        backbone = Resnet(n_channels=in_channels, foundationUK=False)
+        if backbone_name == "resnet":
+            from src.models.backbones import Resnet
+            backbone = Resnet(n_channels=in_channels, foundationUK=False)
+        elif backbone_name == "resnet1d":
+            from src.models.backbones import ResNet1D
+            backbone = ResNet1D(in_channels, num_classes=hidden_dim, dropout=0.0)
+            backbone.fc = nn.Identity()  # Remove final FC layer
+        elif backbone_name == "simple_cnn":
+            from src.models.backbones import SimpleCNN
+            backbone = SimpleCNN(in_channels, num_classes=hidden_dim, dropout=0.0)
+            backbone.fc = nn.Identity()  # Remove final FC layer
+        elif backbone_name == "deepconvlstm":
+            from src.models.backbones import DeepConvLSTM
+            backbone = DeepConvLSTM(in_channels, num_classes=hidden_dim, dropout=0.0)
+            backbone.fc = nn.Identity()  # Remove final FC layer
+        else:
+            raise ValueError(f"Unknown backbone: {backbone_name}")
 
         # 統合モデルを作成
         model = IntegratedSSLModel(
@@ -766,7 +774,26 @@ def create_model(
             sequence_length=sequence_length,
         ).to(device)
 
+        # 事前学習済みモデルをロード（オプション）
+        pretrained_path = config["model"].get("pretrained_path", None)
+        if pretrained_path:
+            logger.info(f"Loading pretrained model from: {pretrained_path}")
+            checkpoint = torch.load(pretrained_path, map_location=device)
+
+            # checkpoint形式を確認
+            if "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+                epoch = checkpoint.get("epoch", "unknown")
+                logger.info(f"Loading from checkpoint epoch: {epoch}")
+            else:
+                state_dict = checkpoint
+
+            # モデルにロード
+            model.load_state_dict(state_dict, strict=True)
+            logger.info("Pretrained model loaded successfully")
+
         logger.info(f"SSL tasks: {ssl_tasks}")
+        logger.info(f"Backbone: {backbone_name}")
     else:
         # 通常のセンサーSSLモデル（現在は未サポート）
         raise NotImplementedError("Non-multitask SSL model is not yet implemented")

@@ -13,88 +13,29 @@ from typing import List, Dict, Any, Optional, Tuple
 
 class SubjectWiseLoader(Dataset):
     """
-    被験者ごとにデータを読み込むDataset
+    被験者ごとにデータを読み込む汎用Dataset
 
-    複数データセットのパスを受け取り、各エポックでランダムにサンプリング。
-    """
-
-    def __init__(self, paths: List[str], sample_threshold: int):
-        """
-        Args:
-            paths: .npy ファイルのパスリスト（複数データセット可）
-            sample_threshold: 最小サンプル数の閾値
-        """
-        # サンプル数が閾値以上のパスのみをフィルタリング
-        self.paths = []
-        for path in paths:
-            X = np.load(path, mmap_mode="r")
-            if X.shape[0] >= sample_threshold:
-                self.paths.append(path)
-
-        if len(self.paths) == 0:
-            raise ValueError(f"No valid paths found with sample_threshold={sample_threshold}")
-
-        self.sample_threshold = sample_threshold
-
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        指定されたインデックスのファイルから、sample_threshold分のデータを取得
-
-        Args:
-            index: パスリストのインデックス
-
-        Returns:
-            (data, data): 入力データ（自己教師ありの場合は同じものを返す）
-        """
-        path = self.paths[index]
-        X = np.load(path, mmap_mode="r")
-
-        # ランダムにsample_threshold分のサンプルを取得
-        num_samples = X.shape[0]
-        sampled_indices = np.random.choice(num_samples, self.sample_threshold, replace=False)
-        data = X[sampled_indices]
-
-        # NaN を 0 に置き換え
-        data = np.nan_to_num(data, nan=0.0)
-
-        return (torch.tensor(data, dtype=torch.float32), torch.tensor(data, dtype=torch.float32))
-
-    def __len__(self) -> int:
-        return len(self.paths)
-
-
-class MultiTaskSubjectWiseLoader(Dataset):
-    """
-    マルチタスク学習用の被験者ごとデータローダー
-
-    データは元のまま返し、拡張はトレーニングループ側で行う（高速化のため）
+    Pre-training用（ラベルなし）とFine-tuning用（ラベル付き）の両方に対応。
+    ssl_tasksパラメータでマルチタスクSSLにも対応。
     """
 
     def __init__(
         self,
         paths: List[str],
         sample_threshold: int,
-        ssl_tasks: List[str],
-        specific_transforms: Optional[Dict[str, Any]] = None,
-        apply_prob: float = 0.5,
+        ssl_tasks: Optional[List[str]] = None,
     ):
         """
         Args:
             paths: .npy ファイルのパスリスト（複数データセット可）
             sample_threshold: 最小サンプル数の閾値
-            ssl_tasks: SSLタスクのリスト（例: ["binary_permute", "masking_channel"]）
-            specific_transforms: 拡張辞書（使用しない、互換性のため残す）
-            apply_prob: 各拡張を適用する確率（使用しない、互換性のため残す）
+            ssl_tasks: SSLタスクのリスト（互換性のため残すが未使用）
         """
-        # サンプル数が閾値以上のパスのみをフィルタリング
-        self.paths = []
-        for path in paths:
-            X = np.load(path, mmap_mode="r")
-            if X.shape[0] >= sample_threshold:
-                self.paths.append(path)
+        # 全てのパスを追加（サンプル数に関わらず）
+        self.paths = paths
 
         if len(self.paths) == 0:
-            raise ValueError(f"No valid paths found with sample_threshold={sample_threshold}")
+            raise ValueError("No paths provided")
 
         self.sample_threshold = sample_threshold
         self.ssl_tasks = ssl_tasks
@@ -113,86 +54,16 @@ class MultiTaskSubjectWiseLoader(Dataset):
         X = np.load(path, mmap_mode="r")
 
         # ランダムにsample_threshold分のサンプルを取得
+        # サンプル数が閾値未満の場合は重複サンプリング（replace=True）を使用
         num_samples = X.shape[0]
-        sampled_indices = np.random.choice(num_samples, self.sample_threshold, replace=False)
+        replace = num_samples < self.sample_threshold
+        sampled_indices = np.random.choice(num_samples, self.sample_threshold, replace=replace)
         data = X[sampled_indices]
 
         # NaN を 0 に置き換え
         data = np.nan_to_num(data, nan=0.0)
 
         return torch.tensor(data, dtype=torch.float32)
-
-    def __len__(self) -> int:
-        return len(self.paths)
-
-
-class LabeledSubjectWiseLoader(Dataset):
-    """
-    ファインチューニング用の被験者ごとデータローダー（ラベル付き）
-
-    データとラベルのペアを読み込む。
-    X.npyとy.npyのパスをペアで管理。
-    """
-
-    def __init__(self, paths: List[Tuple[str, str]], sample_threshold: int):
-        """
-        Args:
-            paths: (X.npy, y.npy) パスのタプルリスト
-            sample_threshold: 最小サンプル数の閾値
-        """
-        # サンプル数が閾値以上のパスのみをフィルタリング
-        self.paths = []
-        for x_path, y_path in paths:
-            X = np.load(x_path, mmap_mode="r")
-            if X.shape[0] >= sample_threshold:
-                self.paths.append((x_path, y_path))
-
-        if len(self.paths) == 0:
-            raise ValueError(
-                f"No valid paths found with sample_threshold={sample_threshold}"
-            )
-
-        self.sample_threshold = sample_threshold
-
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        指定されたインデックスのファイルから、sample_threshold分のデータとラベルを取得
-
-        Args:
-            index: パスリストのインデックス
-
-        Returns:
-            (data, labels):
-                - data: [sample_threshold, channels, time_steps]
-                - labels: [sample_threshold] (クラスラベル)
-        """
-        x_path, y_path = self.paths[index]
-        X = np.load(x_path, mmap_mode="r")
-        y = np.load(y_path, mmap_mode="r")
-
-        # 負のラベル（Undefinedなど）を除外
-        valid_mask = y >= 0
-        valid_indices = np.where(valid_mask)[0]
-
-        # 有効なサンプルが十分にない場合は、少ない数でサンプリング
-        num_valid = len(valid_indices)
-        if num_valid < self.sample_threshold:
-            sampled_indices = valid_indices
-        else:
-            sampled_indices = np.random.choice(
-                valid_indices, self.sample_threshold, replace=False
-            )
-
-        data = X[sampled_indices]
-        labels = y[sampled_indices]
-
-        # NaN を 0 に置き換え
-        data = np.nan_to_num(data, nan=0.0)
-
-        return (
-            torch.tensor(data, dtype=torch.float32),
-            torch.tensor(labels, dtype=torch.long),
-        )
 
     def __len__(self) -> int:
         return len(self.paths)

@@ -530,8 +530,11 @@ class SensorSSLModel(nn.Module):
         backbone: str = "simple_cnn",
         projection_dim: int = 128,
         hidden_dim: int = 256,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
+
+        self.device = device if device is not None else torch.device("cpu")
 
         # Encoder (backbone)
         if backbone == "simple_cnn":
@@ -553,14 +556,16 @@ class SensorSSLModel(nn.Module):
         else:
             raise ValueError(f"Unknown backbone: {backbone}")
 
+        # エンコーダーを指定されたデバイスに配置
+        self.encoder = self.encoder.to(self.device)
         self.encoder_dim = encoder_dim
 
-        # Projection head
+        # Projection head（指定されたデバイス上で作成）
         self.projection = nn.Sequential(
             nn.Linear(encoder_dim, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, projection_dim),
-        )
+        ).to(self.device)
 
     def forward(
         self, x1: torch.Tensor, x2: Optional[torch.Tensor] = None
@@ -613,6 +618,7 @@ class IntegratedSSLModel(nn.Module):
         hidden_dim: int = 256,
         n_channels: int = 3,
         sequence_length: int = 150,
+        device: Optional[torch.device] = None,
     ):
         """
         Args:
@@ -621,20 +627,24 @@ class IntegratedSSLModel(nn.Module):
             hidden_dim: 中間層の次元数
             n_channels: 入力チャネル数（マスク再構成用）
             sequence_length: 入力系列長（マスク再構成用）
+            device: モデルを配置するデバイス
         """
         super().__init__()
 
-        self.backbone = backbone
+        self.device = device if device is not None else torch.device("cpu")
+
+        # バックボーンを指定されたデバイスに配置
+        self.backbone = backbone.to(self.device)
         self.input_dim = backbone.output_dim
         self.ssl_tasks = ssl_tasks
         self.hidden_dim = hidden_dim
         self.n_channels = n_channels
         self.sequence_length = sequence_length
 
-        # タスクごとのヘッドを作成
+        # タスクごとのヘッドを作成（指定されたデバイス上で）
         self.task_heads = nn.ModuleDict()
         for task in ssl_tasks:
-            self.task_heads[task] = self._create_task_head(task)
+            self.task_heads[task] = self._create_task_head(task).to(self.device)
 
     def _create_task_head(self, task: str) -> nn.Module:
         """タスクに応じたヘッドを作成（プレフィックスで判定）"""
@@ -733,8 +743,11 @@ class SensorClassificationModel(nn.Module):
         pretrained_path: Optional[str] = None,
         freeze_backbone: bool = False,
         foundationUK: bool = False,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
+
+        self.device = device if device is not None else torch.device("cpu")
 
         # Encoder (backbone)
         if backbone == "simple_cnn":
@@ -755,6 +768,9 @@ class SensorClassificationModel(nn.Module):
         else:
             raise ValueError(f"Unknown backbone: {backbone}")
 
+        # エンコーダーを指定されたデバイスに配置
+        self.encoder = self.encoder.to(self.device)
+
         # Load pretrained weights if provided
         if pretrained_path:
             self._load_pretrained(pretrained_path)
@@ -765,11 +781,16 @@ class SensorClassificationModel(nn.Module):
                 param.requires_grad = False
 
         # Classification head
-        self.fc = nn.Linear(encoder_dim, num_classes)
+        # EvaClassifier_2layers スタイル: シンプルな2層構造、bias=False
+        self.fc = nn.Sequential(
+            nn.Linear(encoder_dim, 512, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, num_classes, bias=False),
+        ).to(self.device)
 
     def _load_pretrained(self, path: str):
         """事前学習済みの重みをロード"""
-        checkpoint = torch.load(path, map_location="cpu")
+        checkpoint = torch.load(path, map_location=self.device)
 
         # SSL model の encoder の重みを抽出
         if "model_state_dict" in checkpoint:
@@ -943,6 +964,7 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         pretrained_path: Optional[str] = None,
         freeze_backbone: bool = False,
         device_names: Optional[List[str]] = None,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
 
@@ -954,17 +976,22 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         self.num_classes = num_classes
         self.backbone_name = backbone
         self.device_names = device_names or [f"Device{i}" for i in range(num_devices)]
+        self.device = device if device is not None else torch.device("cpu")
 
-        # 各デバイス用のエンコーダーを作成
-        self.encoders = nn.ModuleList()
+        # 各デバイス用のエンコーダーを作成（指定されたデバイス上で）
+        # 事前学習済みモデルと同じ命名規則（feature_extractor）を使用
+        self.encoders = nn.ModuleDict()
         for i in range(num_devices):
             encoder = self._create_encoder(in_channels, backbone)
-            self.encoders.append(encoder)
+            # エンコーダーを指定されたデバイスに配置
+            encoder = encoder.to(self.device)
+            # ModuleDictに直接エンコーダーを格納
+            self.encoders[str(i)] = encoder
 
         # エンコーダー出力の次元数を取得（フラット化後の次元数）
         with torch.no_grad():
-            dummy_input = torch.randn(1, in_channels, 150)  # 仮の入力
-            encoder_output = self.encoders[0](dummy_input)
+            dummy_input = torch.randn(1, in_channels, 150).to(self.device)  # 指定されたデバイスで作成
+            encoder_output = self.encoders["0"](dummy_input)
             # フラット化後の次元数を取得
             encoder_output_flat = encoder_output.view(encoder_output.size(0), -1)
             self.encoder_dim = encoder_output_flat.shape[1]
@@ -972,37 +999,42 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         # 結合後の特徴量次元数
         combined_dim = self.encoder_dim * num_devices
 
-        # 分類ヘッド
+        # 分類ヘッド（指定されたデバイス上で作成）
+        # EvaClassifier_2layers スタイル: シンプルな2層構造、bias=False
         self.classifier = nn.Sequential(
-            nn.Linear(combined_dim, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes),
-        )
+            nn.Linear(combined_dim, 512, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, num_classes, bias=False),
+        ).to(self.device)
 
         # 事前学習済み重みのロード（全エンコーダーに同じ重みを適用）
+        # この時点でモデルは既に指定されたデバイス上にある
         if pretrained_path:
             self._load_pretrained_weights(pretrained_path)
 
         # バックボーン凍結
         if freeze_backbone:
-            for encoder in self.encoders:
+            for encoder in self.encoders.values():
                 for param in encoder.parameters():
                     param.requires_grad = False
 
         logger.info(
             f"Created MultiDeviceSensorClassificationModel: "
             f"{num_devices} devices, {backbone} backbone, "
-            f"encoder_dim={self.encoder_dim}, combined_dim={combined_dim}"
+            f"encoder_dim={self.encoder_dim}, combined_dim={combined_dim}, "
+            f"device={self.device}"
         )
 
     def _create_encoder(self, in_channels: int, backbone: str) -> nn.Module:
-        """エンコーダーを作成"""
+        """エンコーダーを作成
+
+        Resnetの場合、feature_extractorを直接返す（layer1, layer2等の命名を保持）
+        """
         if backbone == "resnet":
             from src.models.backbones import Resnet
-            encoder = Resnet(n_channels=in_channels)
-            # 最後の分類層を削除してエンコーダーとして使用
-            encoder = nn.Sequential(*list(encoder.children())[:-1])
+            resnet = Resnet(n_channels=in_channels)
+            # feature_extractorを直接返す（事前学習済みモデルと同じキー構造）
+            encoder = resnet.feature_extractor
         elif backbone == "simple_cnn":
             from src.models.backbones import SimpleCNN
             encoder = SimpleCNN(in_channels=in_channels, num_classes=10)
@@ -1015,10 +1047,12 @@ class MultiDeviceSensorClassificationModel(nn.Module):
 
     def _load_pretrained_weights(self, pretrained_path: str):
         """事前学習済み重みを全エンコーダーにロード"""
-        logger.info(f"Loading pretrained weights from {pretrained_path}")
+        logger.info(f"Loading pretrained weights from {pretrained_path} to {self.device}")
 
         try:
-            checkpoint = torch.load(pretrained_path, map_location="cpu")
+            # チェックポイントを直接指定されたデバイスにロード
+            # __init__で設定されたself.deviceを使用（モデルは既にそのデバイス上にある）
+            checkpoint = torch.load(pretrained_path, map_location=self.device)
 
             # チェックポイントの形式を確認
             if "model_state_dict" in checkpoint:
@@ -1028,29 +1062,27 @@ class MultiDeviceSensorClassificationModel(nn.Module):
             else:
                 state_dict = checkpoint
 
-            # エンコーダーの重みを抽出
-            encoder_weights = {}
+            # backbone.プレフィックスを削除し、feature_extractorの重みのみを抽出
+            # さらにfeature_extractor.プレフィックスも削除してエンコーダーに直接ロード
+            encoder_state_dict = {}
             for key, value in state_dict.items():
-                # "encoder."で始まるキーを探す
-                if key.startswith("encoder."):
-                    new_key = key.replace("encoder.", "")
-                    encoder_weights[new_key] = value
-                # "backbone."で始まる場合もある
-                elif key.startswith("backbone."):
-                    new_key = key.replace("backbone.", "")
-                    encoder_weights[new_key] = value
+                # backbone.プレフィックスを削除
+                if key.startswith("backbone."):
+                    key = key.replace("backbone.", "", 1)
 
-            if not encoder_weights:
-                logger.warning(
-                    "No encoder weights found in checkpoint. "
-                    "Attempting to load directly..."
-                )
-                encoder_weights = state_dict
+                # feature_extractorの重みを抽出し、プレフィックスを削除
+                if key.startswith("feature_extractor."):
+                    new_key = key.replace("feature_extractor.", "", 1)
+                    encoder_state_dict[new_key] = value
+
+            # 元のcheckpointとstate_dictを削除してメモリ解放
+            del checkpoint
+            del state_dict
 
             # 全エンコーダーに同じ重みをロード
             loaded_count = 0
-            for i, encoder in enumerate(self.encoders):
-                result = encoder.load_state_dict(encoder_weights, strict=False)
+            for i, encoder in enumerate(self.encoders.values()):
+                result = encoder.load_state_dict(encoder_state_dict, strict=False)
                 if result.missing_keys or result.unexpected_keys:
                     logger.warning(
                         f"Encoder {i} ({self.device_names[i]}): "
@@ -1058,6 +1090,9 @@ class MultiDeviceSensorClassificationModel(nn.Module):
                         f"unexpected_keys={result.unexpected_keys}"
                     )
                 loaded_count += 1
+
+            # encoder_state_dictも削除してメモリ解放
+            del encoder_state_dict
 
             logger.info(
                 f"Successfully loaded pretrained weights to {loaded_count}/{self.num_devices} encoders"
@@ -1086,7 +1121,7 @@ class MultiDeviceSensorClassificationModel(nn.Module):
 
         # 各デバイスのデータをエンコード
         features_list = []
-        for i, (encoder, device_data) in enumerate(zip(self.encoders, device_data_list)):
+        for i, (encoder, device_data) in enumerate(zip(self.encoders.values(), device_data_list)):
             features = encoder(device_data)
             # 特徴量をフラット化
             features = features.view(features.size(0), -1)
@@ -1113,7 +1148,7 @@ class MultiDeviceSensorClassificationModel(nn.Module):
             features_list: [torch.Tensor, ...] 各デバイスの特徴量
         """
         features_list = []
-        for encoder, device_data in zip(self.encoders, device_data_list):
+        for encoder, device_data in zip(self.encoders.values(), device_data_list):
             with torch.no_grad():
                 features = encoder(device_data)
                 features = features.view(features.size(0), -1)

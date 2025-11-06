@@ -6,13 +6,13 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-  datasets: ["dsads"]  # 使用するデータセット名
+  datasets: ["dsads"]  # 使用するデータセット名（grid_searchで上書き）
 
   # センサー装着部位の設定
   # - "all": 全デバイス使用（マルチエンコーダーモデル）
-  # - "Torso": 単一デバイス使用（シングルエンコーダーモデル）
-  # - ["Torso", "RightArm", "LeftArm"]: 指定デバイスのみ使用（マルチエンコーダーモデル）
-  sensor_location: "all"
+  # - "atr01": 単一デバイス使用（シングルエンコーダーモデル）
+  # - ["atr01", "atr02"]: 指定デバイスのみ使用（マルチエンコーダーモデル）
+  sensor_location: "all"  # 全デバイス使用
 
   # 使用するセンサータイプ（現在はACCのみ対応）
   # - "ACC": 加速度センサー
@@ -23,7 +23,7 @@ sensor_data:
   batch_loader:
     exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
     sample_threshold: 50  # 使用しないが、バリデーションのため保持
-    batch_size: 1024  # バッチサイズ
+    batch_size: 200  # バッチサイズ（前の設定に合わせて高速化）
 
   # ユーザー分割設定
   user_split:
@@ -45,14 +45,14 @@ augmentation:
 
 # Training
 training:
-  epochs: 200  # Early stoppingで自動調整されるため多めに設定
-  learning_rate: 0.001  # 10倍に引き上げ（0.0001 -> 0.001）
+  epochs: 20  # 前の設定に合わせて20エポックに変更
+  learning_rate: 0.0001  # 前の設定に合わせて変更
   weight_decay: 0.0001
   optimizer: "adam"
   scheduler: "step"  # step, cosine, plateau
   step_size: 20
   gamma: 0.1
-  max_samples_per_epoch: 10000  # 1エポックあたりの最大サンプル数（データ量固定、学習時間短縮）
+  max_samples_per_epoch: null  # 制限なし（全データ使用）
 
 # Loss Function
 loss:
@@ -89,26 +89,23 @@ wandb:
 # Early Stopping
 early_stopping:
   patience: 5  # 早めに収束判定（学習時間短縮）
-  min_delta: 0.001
+  min_delta: 0.0001
 
 # Seed for reproducibility
 seed: 42
 
 # Grid Search
+# 4種類のcheckpointをTorsoデバイスで比較
 grid_search:
   sensor_data:
-    datasets:
-      #- ["dsads"]      # DSADSのみ
-      - ["openpack"]   # OpenPackのみ
-      #- ["mhealth"]    # MHEALTHのみ
-      #- ["pamap2"]     # PAMAP2のみ
+    sensor_location:
+      - "Torso"        # 胴体のみ（高速化のため1デバイスに絞る）
   model:
     pretrained_path:
-      - null  # ランダム初期化（事前学習なし）
-      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp']/models/checkpoint_epoch_93.pth"
-      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['masking_time_channel']/models/checkpoint_epoch_97.pth"
-      - "experiments/pretrain/run_20251104_082803/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp', 'masking_time_channel']/models/checkpoint_epoch_97.pth"
-
+      - "experiments/pretrain/run_20251105_055922/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp']/models/best_model.pth"
+      - "experiments/pretrain/run_20251105_055922/ssl_tasks=['masking_time_channel']/models/best_model.pth"
+      - "experiments/pretrain/run_20251105_055922/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp', 'masking_time_channel']/models/best_model.pth"
+      - null  # ベースライン（ランダム初期化）
 settings:
   stop_on_error: false
   save_summary: true

@@ -8,6 +8,8 @@ import argparse
 import json
 import copy
 import signal
+import atexit
+import psutil
 from pathlib import Path
 from datetime import datetime
 from itertools import product
@@ -20,10 +22,39 @@ import yaml
 # Global executor reference for signal handling
 _executor = None
 _futures = []
+_running_processes = []  # 実行中のプロセスを追跡
 
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
+
+
+def cleanup_processes():
+    """
+    全ての子プロセスとプロセスグループを強制終了
+    """
+    global _running_processes
+
+    if _running_processes:
+        print("\nCleaning up running processes...")
+        for proc in _running_processes:
+            try:
+                if proc.is_running():
+                    # プロセスグループ全体をkill（子プロセス含む）
+                    children = proc.children(recursive=True)
+                    for child in children:
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+
+                    # 親プロセスもkill
+                    proc.kill()
+                    proc.wait(timeout=3)
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                pass
+        _running_processes.clear()
+        print("All processes terminated.")
 
 
 def signal_handler(signum, frame):
@@ -36,6 +67,9 @@ def signal_handler(signum, frame):
     print("="*80 + "\n")
 
     global _executor, _futures
+
+    # 実行中のプロセスを全て終了
+    cleanup_processes()
 
     # 全てのfutureをキャンセル
     if _futures:
@@ -50,12 +84,12 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-def get_available_gpus(memory_threshold: int = 10000) -> List[int]:
+def get_available_gpus(memory_threshold: int = 100) -> List[int]:
     """
     利用可能なGPUのリストを取得
 
     Args:
-        memory_threshold: 空きメモリの閾値（MB）
+        memory_threshold: 空きメモリの閾値（MB、デフォルト100MB）
 
     Returns:
         利用可能なGPUのインデックスリスト
@@ -245,7 +279,6 @@ def generate_grid_experiments(base_config, grid_params):
     # Generate all combinations
     for idx, combination in enumerate(product(*param_values)):
         config = copy.deepcopy(base_config)
-        exp_name_parts = []
 
         for param_path, value in zip(param_names, combination):
             # Update config
@@ -257,79 +290,8 @@ def generate_grid_experiments(base_config, grid_params):
                 current = current[key]
             current[keys[-1]] = value
 
-            # Build experiment name
-            # 値が長い文字列（ファイルパス等）の場合は、短縮表現を使用
-            if isinstance(value, str) and len(str(value)) > 30:
-                # nullの場合
-                if value is None or value == "null":
-                    value_str = "None"
-                # ファイルパスの場合は、親ディレクトリ名を使用
-                elif "/" in value or "\\" in value:
-                    path_parts = value.replace("\\", "/").split("/")
-                    # checkpoint_epoch_N.pth のようなファイル名を抽出
-                    if path_parts[-1].endswith(".pth"):
-                        # pretrained_pathの場合、SSL task名を抽出
-                        # 例: experiments/pretrain/run_20251104_082803/ssl_tasks=['masking_time_channel']/models/checkpoint_epoch_97.pth
-                        #     -> ssl_tasks=['masking_time_channel']_best_model
-                        ssl_task_dir = None
-                        for part in path_parts:
-                            if part.startswith("ssl_tasks="):
-                                ssl_task_dir = part
-                                break
-
-                        if ssl_task_dir:
-                            # ssl_tasksディレクトリ名 + best_model
-                            value_str = f"{ssl_task_dir}_best_model"
-                        else:
-                            # 従来の処理（後方互換性のため）
-                            parent_dir = path_parts[-3] if len(path_parts) >= 3 else ""
-                            filename = Path(value).stem  # 拡張子なしのファイル名
-                            value_str = f"{parent_dir}_{filename}" if parent_dir else filename
-                    else:
-                        # ディレクトリの場合は最後の2つの部分を使用
-                        value_str = "_".join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]
-                else:
-                    # その他の長い文字列は最初の30文字のみ
-                    value_str = str(value)[:30]
-            else:
-                value_str = str(value)
-
-            # 共通部分を削除（複数の値がある場合のみ）
-            all_strs = all_value_strings[param_path]
-            if len(all_strs) > 1:
-                # チェックポイントパスの場合は特別処理（エポック番号を抽出）
-                if "checkpoint_epoch_" in value_str:
-                    import re
-                    # 全てのチェックポイントパスから抽出されたエポック番号をチェック
-                    epochs = []
-                    for s in all_strs:
-                        match = re.search(r'checkpoint_epoch_(\d+)', s)
-                        if match:
-                            epochs.append(match.group(1))
-
-                    # 全てのエポックが同じ場合、runディレクトリ名を使用
-                    if len(set(epochs)) == 1:
-                        # "run_20251030_052930_checkpoint_epoch_100" -> "20251030_052930"
-                        # runディレクトリ部分を抽出
-                        run_match = re.match(r'(.+?)_checkpoint_epoch', value_str)
-                        if run_match:
-                            value_str = run_match.group(1)
-                    else:
-                        # エポックが異なる場合、エポック番号のみ使用
-                        match = re.search(r'checkpoint_epoch_(\d+)', value_str)
-                        if match:
-                            value_str = f"ep{match.group(1)}"
-                elif all(any(c.isdigit() for c in s) for s in all_strs) and not all('.' in s for s in all_strs):
-                    # 全ての値に数字が含まれていて、小数点がない場合のみ共通部分を削除
-                    # 小数点がある場合（学習率等）は元の値を使う
-                    value_str = _remove_common_parts(value_str, all_strs)
-
-            exp_name_parts.append(f"{keys[-1]}={value_str}")
-
-        exp_name = "_".join(exp_name_parts)
-        # 実験名が重複する場合に備えてインデックスを追加
-        if len(experiments) > 0 and any(e["name"] == exp_name for e in experiments):
-            exp_name = f"{exp_name}_{idx}"
+        # Use simple experiment ID
+        exp_name = f"exp_{idx}"
 
         experiments.append({"name": exp_name, "config": config})
 
@@ -396,29 +358,37 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
     # ログファイルのパス
     log_file = os.path.join(exp_dir, "experiment.log")
 
+    proc = None
     try:
         # プロセスグループを作成して、終了時に全てのサブプロセスも確実に終了させる
-        if is_finetune:
-            # finetuneの場合は標準出力に直接表示
-            result = subprocess.run(
+        # pretrainとfinetuneの両方でログファイルに保存
+        global _running_processes
+
+        with open(log_file, "w") as f:
+            # Popenを使用してプロセスを追跡
+            proc = subprocess.Popen(
                 [sys.executable, script_path, "--config", config_path],
+                stdout=f,
+                stderr=subprocess.STDOUT,
                 text=True,
-                check=True,
                 env=env,
                 start_new_session=True,  # 新しいセッションを開始
             )
-        else:
-            # pretrainの場合はログファイルに保存
-            with open(log_file, "w") as f:
-                result = subprocess.run(
-                    [sys.executable, script_path, "--config", config_path],
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    check=True,
-                    env=env,
-                    start_new_session=True,  # 新しいセッションを開始
-                )
+
+            # psutilでプロセスをラップして追跡
+            psutil_proc = psutil.Process(proc.pid)
+            _running_processes.append(psutil_proc)
+
+            # プロセスの完了を待つ
+            returncode = proc.wait()
+
+            # 完了したプロセスをリストから削除
+            if psutil_proc in _running_processes:
+                _running_processes.remove(psutil_proc)
+
+            # 戻り値をチェック
+            if returncode != 0:
+                raise subprocess.CalledProcessError(returncode, proc.args)
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -435,23 +405,34 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
 
         status = "failed"
 
-        # ログファイルから最後の50行を読み取ってエラーとして保存
-        if is_finetune:
-            # finetuneの場合はエラーメッセージのみ
-            error = str(e)
-        else:
-            # pretrainの場合はログファイルから読み取る
+        # プロセスをクリーンアップ
+        if proc:
             try:
-                with open(log_file, "r") as f:
-                    log_lines = f.readlines()
-                    error = "".join(log_lines[-50:])
-            except:
-                error = str(e)
+                psutil_proc = psutil.Process(proc.pid)
+                if psutil_proc in _running_processes:
+                    _running_processes.remove(psutil_proc)
+                # 子プロセスも終了
+                children = psutil_proc.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                psutil_proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        # ログファイルから最後の50行を読み取ってエラーとして保存
+        try:
+            with open(log_file, "r") as f:
+                log_lines = f.readlines()
+                error = "".join(log_lines[-50:])
+        except:
+            error = str(e)
 
         print(f"\n✗ Experiment '{exp_name}' failed")
         print(f"Error: {error}")
-        if not is_finetune:
-            print(f"Log file: {log_file}")
+        print(f"Log file: {log_file}")
         print(f"Duration: {duration:.2f} seconds")
 
     return {
@@ -467,6 +448,9 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
 
 
 def main(args):
+    # atexitハンドラーを登録（プログラム終了時に必ずクリーンアップ）
+    atexit.register(cleanup_processes)
+
     # Load configuration
     full_config = load_yaml(args.config)
 
@@ -594,8 +578,12 @@ def main(args):
                         })
         except KeyboardInterrupt:
             print("\n\nKeyboardInterrupt received. Cleaning up...")
-            # signal_handlerが呼ばれるのでここでは何もしない
+            cleanup_processes()
             raise
+        finally:
+            # Executorが正常に終了するのを確認
+            _executor = None
+            _futures.clear()
     else:
         # 順次実行（既存の動作）
         for i, exp in enumerate(experiments, 1):
@@ -614,9 +602,9 @@ def main(args):
         "timestamp": timestamp,
         "total_experiments": len(experiments),
         "completed_experiments": len(results),
-        "successful": sum(1 for r in results if r["status"] == "success"),
-        "failed": sum(1 for r in results if r["status"] == "failed"),
-        "total_duration": sum(r["duration"] for r in results),
+        "successful": sum(1 for r in results if r.get("status") == "success"),
+        "failed": sum(1 for r in results if r.get("status") == "failed"),
+        "total_duration": sum(r.get("duration", 0) for r in results),
         "results": results,
     }
 

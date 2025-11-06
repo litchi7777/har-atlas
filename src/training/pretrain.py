@@ -54,9 +54,8 @@ DEFAULT_DATA_ROOT = "har-unified-dataset/data/processed"
 DEFAULT_SSL_TASKS = ["binary_permute", "binary_reverse", "binary_timewarp"]
 DEFAULT_TASK_WEIGHTS = [1.0, 1.0, 1.0]
 DEFAULT_APPLY_PROB = 0.5
-DEFAULT_N_SEGMENTS = 4
-DEFAULT_TIMEWARP_SIGMA = 0.2
-DEFAULT_TIMEWARP_KNOT = 4
+DEFAULT_N_SEGMENTS = 5  # 最適値: 5セグメント
+DEFAULT_MAX_WARP_FACTOR = 1.5  # 最適値: 1.5倍（±50%伸縮）
 LOG_INTERVAL = 10
 NUM_TASK_METERS = 3
 
@@ -147,9 +146,7 @@ def create_augmentation_transforms(
         elif aug_name == "reverse":
             transforms["reverse"] = Reverse()
         elif aug_name == "timewarp":
-            transforms["timewarp"] = TimeWarping(
-                sigma=DEFAULT_TIMEWARP_SIGMA, knot=DEFAULT_TIMEWARP_KNOT
-            )
+            transforms["timewarp"] = TimeWarping(max_warp_factor=DEFAULT_MAX_WARP_FACTOR)
 
     # Maskingタスクの処理
     masking_tasks = [task for task in ssl_tasks if task.startswith("masking_")]
@@ -418,7 +415,7 @@ def apply_augmentations_batch(
             augmented_batch.append(augmented_sample)
         x_base = torch.stack(augmented_batch)
 
-    # Binary拡張タスク - 各タスクで独立した拡張を適用
+    # Binary拡張タスク - 各タスクで独立した拡張を適用（GPU上で直接処理）
     binary_tasks = [t for t in ssl_tasks if t.startswith("binary_")]
     for task in binary_tasks:
         aug_name = task.replace("binary_", "")
@@ -427,18 +424,17 @@ def apply_augmentations_batch(
         apply = np.random.random() < apply_prob
 
         if apply and aug_name in transforms:
-            # ベースデータをコピーして、このタスク専用の拡張を適用
+            # ベースデータをコピーして、このタスク専用の拡張を適用（GPU上で直接）
             x_task = x_base.clone()
-            # CPU上でnumpy配列として拡張を適用
-            x_np = x_task.cpu().numpy()
-            augmented = np.stack([transforms[aug_name](sample) for sample in x_np])
-            task_inputs_dict[task] = torch.from_numpy(augmented).float()
+            # Torch tensorとして拡張を適用（GPU上）
+            augmented = torch.stack([transforms[aug_name](sample) for sample in x_task])
+            task_inputs_dict[task] = augmented
         else:
             # 拡張なしの場合はベースデータをそのまま使用
             task_inputs_dict[task] = x_base.clone()
 
         # ラベル: 全サンプルで同じ（バッチ全体に同じ拡張を適用）
-        labels_dict[task] = torch.full((batch_size,), 1 if apply else 0, dtype=torch.long)
+        labels_dict[task] = torch.full((batch_size,), 1 if apply else 0, dtype=torch.long, device=device)
 
     # Maskingタスク - 各タスクで独立したマスキングを適用
     masking_tasks = [t for t in ssl_tasks if t.startswith("masking_")]
@@ -463,9 +459,9 @@ def apply_augmentations_batch(
         # ラベル: 元データ（再構成ターゲット）
         labels_dict[task] = original_x
 
-    # デバイスに移動
-    task_inputs_dict = {k: v.to(device) for k, v in task_inputs_dict.items()}
-    labels_dict = {k: v.to(device) for k, v in labels_dict.items()}
+    # デバイスに移動（Binary変換は既にGPU上、Masking変換はCPUから転送）
+    task_inputs_dict = {k: v.to(device) if v.device != device else v for k, v in task_inputs_dict.items()}
+    labels_dict = {k: v.to(device) if v.device != device else v for k, v in labels_dict.items()}
 
     return task_inputs_dict, labels_dict
 
@@ -628,16 +624,8 @@ def train_epoch(
         else:
             pbar.set_postfix({"loss": f"{loss_meter.avg:.4f}"})
 
-        # W&Bにログ
-        if use_wandb and batch_idx % LOG_INTERVAL == 0:
-            log_dict = {
-                "train/batch_loss": loss.item(),
-                "train/step": epoch * len(dataloader) + batch_idx,
-            }
-            if multitask:
-                for i, task in enumerate(ssl_tasks):
-                    log_dict[f"train/batch_{task}_loss"] = task_losses[task].item()
-            wandb.log(log_dict)
+        # バッチごとのログは不要（ストレージとログ転送時間の削減）
+        pass
 
     # 結果を返す
     if multitask:
@@ -765,14 +753,15 @@ def create_model(
         else:
             raise ValueError(f"Unknown backbone: {backbone_name}")
 
-        # 統合モデルを作成
+        # 統合モデルを作成（GPU上で直接構築）
         model = IntegratedSSLModel(
             backbone=backbone,
             ssl_tasks=ssl_tasks,
             hidden_dim=hidden_dim,
             n_channels=in_channels,
             sequence_length=sequence_length,
-        ).to(device)
+            device=device,
+        )
 
         # 事前学習済みモデルをロード（オプション）
         pretrained_path = config["model"].get("pretrained_path", None)
@@ -892,7 +881,6 @@ def log_epoch_metrics(
         log_dict = {
             "train/epoch_loss": train_loss,
             "train/learning_rate": optimizer.param_groups[0]["lr"],
-            "train/epoch": epoch,
         }
         if use_multitask:
             ssl_tasks = get_ssl_tasks_from_config({"multitask": multitask_config})
@@ -906,7 +894,7 @@ def log_epoch_metrics(
                 for i, task in enumerate(ssl_tasks):
                     log_dict[f"val/epoch_{task}_loss"] = val_metrics[f"task{i+1}_loss"]
 
-        wandb.log(log_dict)
+        wandb.log(log_dict, step=epoch)
 
 
 def run_training_loop(

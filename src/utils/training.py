@@ -196,10 +196,15 @@ def init_wandb(config: Dict[str, Any], model: nn.Module) -> bool:
             tags=wandb_config.get("tags", []),
             notes=wandb_config.get("notes"),
             config=config,
+            settings=wandb.Settings(
+                # システムメトリクス（GPU使用率、メモリ等）を無効化
+                _disable_stats=True,
+                _disable_meta=True,
+            ),
         )
 
-        # モデルを監視
-        wandb.watch(model, log="all", log_freq=100)
+        # モデル監視を無効化（勾配・パラメータのログは不要）
+        # wandb.watch(model, log="all", log_freq=100)
 
         logger.info("Weights & Biases initialized successfully")
         return True

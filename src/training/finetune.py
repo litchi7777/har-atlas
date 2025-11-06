@@ -210,16 +210,6 @@ def train_epoch(
         acc = 100.0 * correct / total
         pbar.set_postfix({"loss": f"{loss_meter.avg:.4f}", "acc": f"{acc:.2f}%"})
 
-        # W&Bにログ
-        if use_wandb and batch_idx % LOG_INTERVAL == 0:
-            wandb.log(
-                {
-                    "train/batch_loss": loss.item(),
-                    "train/batch_accuracy": acc,
-                    "train/step": epoch * len(dataloader) + batch_idx,
-                }
-            )
-
     accuracy = 100.0 * correct / total
     return loss_meter.avg, accuracy
 
@@ -811,7 +801,8 @@ def create_model(
         backbone=config["model"].get("backbone", "simple_cnn"),
         pretrained_path=config["model"].get("pretrained_path"),
         freeze_backbone=config["model"].get("freeze_backbone", False),
-    ).to(device)
+        device=device,
+    )
 
     param_info = count_parameters(model)
     logger.info(
@@ -854,7 +845,8 @@ def create_multi_device_model(
         pretrained_path=config["model"].get("pretrained_path"),
         freeze_backbone=config["model"].get("freeze_backbone", False),
         device_names=device_locations,
-    ).to(device)
+        device=device,
+    )
 
     param_info = count_parameters(model)
     logger.info(
@@ -905,8 +897,8 @@ def log_validation_metrics(
                 "val/recall": val_metrics["recall"],
                 "val/f1": val_metrics["f1"],
                 "train/learning_rate": optimizer.param_groups[0]["lr"],
-                "train/epoch": epoch,
-            }
+            },
+            step=epoch,
         )
 
 
@@ -1011,7 +1003,7 @@ def run_training_loop(
     logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
     logger.info(f"Test F1: {test_metrics['f1']:.4f}")
 
-    # W&Bにログ
+    # W&Bにログ（最終epochとして記録）
     if use_wandb:
         wandb.log({
             "test/loss": test_metrics["loss"],
@@ -1019,7 +1011,7 @@ def run_training_loop(
             "test/precision": test_metrics["precision"],
             "test/recall": test_metrics["recall"],
             "test/f1": test_metrics["f1"],
-        })
+        }, step=epoch)
 
     # 結果を辞書にまとめて返す
     results = {

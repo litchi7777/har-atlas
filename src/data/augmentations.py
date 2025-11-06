@@ -182,76 +182,66 @@ class Rotation:
 
 
 class TimeWarping:
-    """時間軸の変形（伸縮）（NumPy専用、SSLタスク用）"""
+    """時間軸の変形（伸縮）（Torch tensor対応、SSLタスク用）"""
 
-    def __init__(self, sigma: float = 0.2, knot: int = 4):
+    def __init__(self, max_warp_factor: float = 1.5):
         """
         Args:
-            sigma: 変形の強さ
-            knot: 制御点の数
+            max_warp_factor: 最大ワープ係数（例: 1.5 = ±50%の伸縮）
         """
-        self.sigma = sigma
-        self.knot = knot
+        self.max_warp_factor = max_warp_factor
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (channels, time_steps) - NumPy配列のみサポート
+            x: (channels, time_steps) - Torch tensor
 
         Returns:
             拡張されたデータ
         """
-        time_steps = x.shape[1]
+        device = x.device
+        channels, time_steps = x.shape
 
-        # ランダムな変形曲線を生成
-        warp = np.random.normal(1.0, self.sigma, size=(self.knot + 2,))
-        warp = np.cumsum(warp)  # Cumulative sum
-        warp_steps = np.linspace(0, time_steps - 1, num=self.knot + 2)
+        # ランダムなカーブ（滑らかなノイズ）を作る
+        warp_curve = torch.randn(time_steps, device=device).cumsum(0)
+        warp_curve = (warp_curve - warp_curve.min()) / (warp_curve.max() - warp_curve.min())  # 0〜1に正規化
+        warp_curve = warp_curve * (time_steps - 1)  # 0〜time_steps-1にスケーリング
 
-        # 線形補間で時間軸全体に拡張
-        from scipy.interpolate import interp1d
+        # ワープ量を最大ワープ係数で調整（例えば1.5なら最大50%の伸縮）
+        center = torch.linspace(0, time_steps - 1, time_steps, device=device)
+        indices = center + (warp_curve - center) * (self.max_warp_factor - 1)
+        indices = indices.clamp(0, time_steps - 1)
 
-        warper = interp1d(warp_steps, warp, kind="cubic")
+        # 線形補間（非整数インデックスに対応）
+        idx_low = indices.floor().long()
+        idx_high = (idx_low + 1).clamp(max=time_steps - 1)
+        weight = indices - idx_low
 
-        # 新しい時間軸インデックス
-        new_indices = np.arange(time_steps)
-        warped_indices = warper(new_indices)
-
-        # 正規化して範囲内に収める
-        warped_indices = (warped_indices - warped_indices.min()) / (
-            warped_indices.max() - warped_indices.min()
-        )
-        warped_indices = warped_indices * (time_steps - 1)
-        warped_indices = np.clip(warped_indices, 0, time_steps - 1)
-
-        # 補間してサンプリング
-        x_warped = np.zeros_like(x)
-        for c in range(x.shape[0]):
-            interp = interp1d(np.arange(time_steps), x[c, :], kind="linear")
-            x_warped[c, :] = interp(warped_indices)
+        # 各チャネルに対して補間
+        x_warped = (1 - weight).unsqueeze(0) * x[:, idx_low] + weight.unsqueeze(0) * x[:, idx_high]
 
         return x_warped
 
 
 class Permutation:
-    """時系列を複数セグメントに分割して並び替え"""
+    """時系列を複数セグメントに分割して並び替え（Torch tensor対応）"""
 
-    def __init__(self, n_segments: int = 4):
+    def __init__(self, n_segments: int = 5):
         """
         Args:
             n_segments: 分割するセグメント数
         """
         self.n_segments = n_segments
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (channels, time_steps)
+            x: (channels, time_steps) - Torch tensor
 
         Returns:
             拡張されたデータ
         """
-        time_steps = x.shape[1]
+        channels, time_steps = x.shape
         segment_length = time_steps // self.n_segments
 
         # セグメントに分割
@@ -262,27 +252,28 @@ class Permutation:
             segments.append(x[:, start:end])
 
         # ランダムに並び替え
-        np.random.shuffle(segments)
+        indices = torch.randperm(self.n_segments)
+        segments = [segments[i] for i in indices]
 
         # 連結
-        x_permuted = np.concatenate(segments, axis=1)
+        x_permuted = torch.cat(segments, dim=1)
 
         return x_permuted
 
 
 class Reverse:
-    """時系列を時間軸に沿って反転"""
+    """時系列を時間軸に沿って反転（Torch tensor対応）"""
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (channels, time_steps)
+            x: (channels, time_steps) - Torch tensor
 
         Returns:
             拡張されたデータ
         """
-        # 時間軸（axis=1）に沿って反転
-        return np.flip(x, axis=1).copy()
+        # 時間軸（dim=1）に沿って反転
+        return torch.flip(x, dims=[1])
 
 
 class MagnitudeWarping:

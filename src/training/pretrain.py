@@ -405,36 +405,43 @@ def apply_augmentations_batch(
     labels_dict = {}
 
     # 通常のデータ拡張を最初に適用（全タスク共通のベース）
-    x_base = x
+    x_base = x.to(device)  # 入力を確実にデバイスに転送
     if "base_augmentation" in transforms:
         base_aug = transforms["base_augmentation"]
         # GPU上で直接適用
         augmented_batch = []
-        for sample in x:
+        for sample in x_base:
             augmented_sample = base_aug(sample)
             augmented_batch.append(augmented_sample)
-        x_base = torch.stack(augmented_batch)
+        x_base = torch.stack(augmented_batch).to(device)  # 確実にデバイスに転送
 
-    # Binary拡張タスク - 各タスクで独立した拡張を適用（GPU上で直接処理）
+    # Binary拡張タスク - バッチ全体に変換を適用してからマスクで選択
     binary_tasks = [t for t in ssl_tasks if t.startswith("binary_")]
     for task in binary_tasks:
         aug_name = task.replace("binary_", "")
 
-        # ランダムに適用するか決定
-        apply = np.random.random() < apply_prob
+        # サンプルごとにランダムに決定
+        apply_mask = np.random.random(batch_size) < apply_prob  # shape: (batch_size,)
 
-        if apply and aug_name in transforms:
-            # ベースデータをコピーして、このタスク専用の拡張を適用（GPU上で直接）
-            x_task = x_base.clone()
-            # Torch tensorとして拡張を適用（GPU上）
-            augmented = torch.stack([transforms[aug_name](sample) for sample in x_task])
-            task_inputs_dict[task] = augmented
+        if aug_name in transforms:
+            # バッチ全体に変換を適用（高速）
+            x_augmented = torch.stack([transforms[aug_name](sample) for sample in x_base])
+            # デバイスに明示的に転送
+            x_augmented = x_augmented.to(device)
+
+            # マスクで選択（ベクトル演算）
+            # apply_mask を (batch_size, 1, 1) に変形してブロードキャスト
+            mask_tensor = torch.from_numpy(apply_mask.astype(np.float32)).to(device)
+            mask_tensor = mask_tensor.view(batch_size, 1, 1)  # (B, 1, 1)
+
+            # mask * augmented + (1 - mask) * original
+            task_inputs_dict[task] = mask_tensor * x_augmented + (1 - mask_tensor) * x_base
         else:
-            # 拡張なしの場合はベースデータをそのまま使用
             task_inputs_dict[task] = x_base.clone()
+            apply_mask = np.zeros(batch_size, dtype=bool)
 
-        # ラベル: 全サンプルで同じ（バッチ全体に同じ拡張を適用）
-        labels_dict[task] = torch.full((batch_size,), 1 if apply else 0, dtype=torch.long, device=device)
+        # サンプルごとに異なるラベル
+        labels_dict[task] = torch.from_numpy(apply_mask.astype(np.int64)).to(device)
 
     # Maskingタスク - 各タスクで独立したマスキングを適用
     masking_tasks = [t for t in ssl_tasks if t.startswith("masking_")]

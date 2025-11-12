@@ -150,6 +150,9 @@ notebooks/outputs/
 # Claude Code temporary files
 .claude/
 
+# Documentation (handoff documents, notes)
+docs/
+
 # Analysis outputs (generated figures)
 analysis/figures/
 !analysis/figures/.gitkeep

@@ -171,7 +171,8 @@ grid_search:
 settings:
   stop_on_error: false
   save_summary: true
-  summary_path: "logs/pretrain_experiments_summary.json"
+  # summary_pathを指定しない場合、自動的にexperiments/*/run_*/summary.jsonに保存される
   parallel: true  # GPU並列実行
-  max_workers: 4  # 1つのワーカーのみ（device設定のcuda:3を使用）
+  experiments_per_gpu: 1  # 1つのGPUで同時実行する実験数（Pretrainは1推奨）
+  max_workers: null  # nullの場合は available_gpus × experiments_per_gpu で自動計算
   available_gpus: [0,1,2,3]  # 使用するGPUのリスト（例: [0, 1, 3]で複数GPU指定可能）

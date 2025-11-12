@@ -38,14 +38,14 @@ augmentation:
 
 # Training
 training:
-  epochs: 20  # 前の設定に合わせて20エポックに変更
-  learning_rate: 0.0001  # 前の設定に合わせて変更
+  epochs: 60
+  learning_rate: 0.0005  # 最適学習率
   weight_decay: 0.0001
   optimizer: "adam"
   scheduler: "step"  # step, cosine, plateau
   step_size: 20
   gamma: 0.1
-  max_samples_per_epoch: 5000  # 1エポックあたり5000サンプルに制限（学習時間短縮）
+  max_samples_per_epoch: 10000  # 最適設定: 10k samples
 
 # Loss Function
 loss:
@@ -81,32 +81,44 @@ wandb:
 
 # Early Stopping
 early_stopping:
-  patience: 5  # 早めに収束判定（学習時間短縮）
+  patience: 10  # 最適設定
   min_delta: 0.0001
 
 # Seed for reproducibility
 seed: 42
 
-# Grid Search
-# 1エポックあたりのサンプル数の比較実験（エポック数：20で固定）
+# Grid Search（オプション）
+# 3つの事前学習モデル × 複数データセット・部位 × 3ランダムシードで検証
 grid_search:
+  seed:
+    - 42
+    - 123
+    - 456
   sensor_data:
     dataset_location_pairs:
-      # DSADS Torsoで固定（シングルデバイス）
-      - [["dsads", "Torso"]]
+      # 手・腕部位
+      - [["pamap2", "hand"]]           # PAMAP2: 手 (12クラス)
+      - [["mhealth", "RightWrist"]]    # MHEALTH: 右手首 (12クラス)
+      - [["dsads", "RightArm"]]        # DSADS: 右腕 (19クラス)
+      - [["forthtrace", "RightWrist"]] # FORTHTRACE: 右手首 (16クラス)
+      # 胴体・腰部位
+      - [["dsads", "Torso"]]           # DSADS: 胴体 (19クラス)
+      - [["mhealth", "Chest"]]         # MHEALTH: 胸 (12クラス)
+      - [["har70plus", "LowerBack"]]   # HAR70PLUS: 腰 (7クラス)
+      - [["harth", "LowerBack"]]       # HARTH: 腰 (12クラス)
+      # 足部位
+      - [["dsads", "RightLeg"]]        # DSADS: 右足 (19クラス)
+      - [["mhealth", "LeftAnkle"]]     # MHEALTH: 左足首 (12クラス)
+      - [["forthtrace", "LeftAnkle"]]  # FORTHTRACE: 左足首 (16クラス)
   model:
     pretrained_path:
-      - null  # ランダム初期化のみ
-  training:
-    epochs:
-      - 20  # エポック数を20で固定
-    max_samples_per_epoch:
-      - 40000  # 超大量（8倍のデータ）
-      - 80000  # 極大量（16倍のデータ）
+      # run_20251111_072854 (NHANES単独学習)
+      - "experiments/pretrain/run_20251111_072854/exp_2/models/checkpoint_epoch_44.pth"  # NHANESのみ
+
 settings:
   stop_on_error: false
   save_summary: true
-  # summary_pathを指定しない場合、自動的にexperiments/*/run_*/summary.jsonに保存される
-  parallel: true  # GPU並列実行を有効化
-  max_workers: 2  # 2実験を並列実行（max_samples_per_epoch: 40k, 80k）
-  available_gpus: [0, 1]  # 使用するGPU（2つ）
+  parallel: true
+  experiments_per_gpu: 4  # 1つのGPUで同時実行する実験数
+  max_workers: null  # nullの場合は available_gpus × experiments_per_gpu で自動計算 (4 GPUs × 4 = 16)
+  available_gpus: [0, 1, 2, 3]

@@ -28,6 +28,9 @@ har-foundation/
 │   │   ├── raw/             # 生データ
 │   │   └── processed/       # 前処理済みデータ
 │   └── outputs/             # 可視化結果（HTML）
+├── analysis/                 # データ分析・探索的データ解析（EDA）
+│   ├── dataset_distribution.py  # データセット分布の可視化
+│   └── figures/             # 生成される図の保存先
 ├── models/                   # モデル保存ディレクトリ
 │   ├── pretrained/          # 事前学習モデル
 │   ├── finetuned/           # ファインチューニング済みモデル

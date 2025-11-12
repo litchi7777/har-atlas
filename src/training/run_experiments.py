@@ -280,6 +280,8 @@ def generate_grid_experiments(base_config, grid_params):
     for idx, combination in enumerate(product(*param_values)):
         config = copy.deepcopy(base_config)
 
+        # グリッドサーチパラメータを記録
+        grid_params_dict = {}
         for param_path, value in zip(param_names, combination):
             # Update config
             keys = param_path.split(".")
@@ -290,15 +292,22 @@ def generate_grid_experiments(base_config, grid_params):
                 current = current[key]
             current[keys[-1]] = value
 
+            # グリッドサーチパラメータを記録（human-readable形式）
+            grid_params_dict[param_path] = value
+
         # Use simple experiment ID
         exp_name = f"exp_{idx}"
 
-        experiments.append({"name": exp_name, "config": config})
+        experiments.append({
+            "name": exp_name,
+            "config": config,
+            "grid_params": grid_params_dict  # グリッドサーチパラメータを追加
+        })
 
     return experiments
 
 
-def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, run_id=None):
+def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, run_id=None, grid_params=None):
     """
     Run a single experiment
 
@@ -309,6 +318,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
         experiment_dir: Directory to save experiment configs and results
         gpu_id: GPU ID to use (None for default)
         run_id: Grid search run ID (shared across all experiments in the same grid search)
+        grid_params: Grid search parameters for this experiment (dict)
 
     Returns:
         Dictionary with experiment results
@@ -399,11 +409,23 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
         print(f"\n✓ Experiment '{exp_name}' completed successfully")
         print(f"Duration: {duration:.2f} seconds")
 
+        # results.jsonからメトリクスを読み取る
+        metrics = {}
+        results_file = os.path.join(exp_dir, "results.json")
+        if os.path.exists(results_file):
+            try:
+                with open(results_file, "r") as f:
+                    metrics = json.load(f)
+                print(f"Metrics loaded from {results_file}")
+            except Exception as e:
+                print(f"Warning: Failed to load metrics from {results_file}: {e}")
+
     except subprocess.CalledProcessError as e:
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
 
         status = "failed"
+        metrics = {}  # 失敗時はメトリクスなし
 
         # プロセスをクリーンアップ
         if proc:
@@ -435,7 +457,7 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
         print(f"Log file: {log_file}")
         print(f"Duration: {duration:.2f} seconds")
 
-    return {
+    result = {
         "name": exp_name,
         "status": status,
         "duration": duration,
@@ -445,6 +467,16 @@ def run_experiment(exp_name, config, script_path, experiment_dir, gpu_id=None, r
         "gpu_id": gpu_id,
         "error": error,
     }
+
+    # グリッドサーチパラメータを追加
+    if grid_params:
+        result["grid_params"] = grid_params
+
+    # メトリクスが存在する場合は追加
+    if metrics:
+        result["metrics"] = metrics
+
+    return result
 
 
 def main(args):
@@ -509,7 +541,8 @@ def main(args):
 
     # GPU並列実行の設定
     parallel = settings.get("parallel", False)
-    max_workers = settings.get("max_workers", None)  # Noneの場合は利用可能なGPU数
+    max_workers = settings.get("max_workers", None)  # Noneの場合は利用可能なGPU数 × experiments_per_gpu
+    experiments_per_gpu = settings.get("experiments_per_gpu", 1)  # 1GPUあたりの同時実行数
     stop_on_error = settings.get("stop_on_error", False)
     specified_gpus = settings.get("available_gpus", None)  # 使用するGPUのリスト
 
@@ -548,12 +581,12 @@ def main(args):
             parallel = False
         else:
             if max_workers is None:
-                max_workers = len(available_gpus)
-            else:
-                max_workers = min(max_workers, len(available_gpus))
+                # max_workersが未指定の場合、GPU数 × experiments_per_gpuで計算
+                max_workers = len(available_gpus) * experiments_per_gpu
 
             print(f"Parallel execution enabled:")
             print(f"  Available GPUs: {available_gpus}")
+            print(f"  Experiments per GPU: {experiments_per_gpu}")
             print(f"  Max workers: {max_workers}\n")
 
     if parallel:
@@ -579,7 +612,8 @@ def main(args):
                         args.script,
                         experiment_dir,
                         gpu_id,
-                        run_id  # Grid search run IDを渡す
+                        run_id,  # Grid search run IDを渡す
+                        exp.get("grid_params")  # Grid paramsを渡す
                     )
                     futures[future] = (i + 1, exp["name"], gpu_id)
 
@@ -613,7 +647,14 @@ def main(args):
         for i, exp in enumerate(experiments, 1):
             print(f"\nExperiment {i}/{len(experiments)}")
 
-            result = run_experiment(exp["name"], exp["config"], args.script, experiment_dir, run_id=run_id)
+            result = run_experiment(
+                exp["name"],
+                exp["config"],
+                args.script,
+                experiment_dir,
+                run_id=run_id,
+                grid_params=exp.get("grid_params")
+            )
             results.append(result)
 
             # Stop if experiment failed and stop_on_error is True
@@ -622,6 +663,31 @@ def main(args):
                 break
 
     # Save results summary
+    # 軽量版: 分析に必要な最小限の情報のみ保存
+    compact_results = []
+    for r in results:
+        compact_result = {
+            "name": r["name"],
+            "status": r["status"],
+        }
+
+        # Grid searchパラメータ（最重要）
+        if "grid_params" in r:
+            compact_result["grid_params"] = r["grid_params"]
+
+        # メトリクス（最重要）
+        if "metrics" in r:
+            compact_result["metrics"] = r["metrics"]
+
+        # エラー情報（失敗時のみ、最初の300文字）
+        if r["status"] == "failed" and "error" in r:
+            error_msg = r["error"]
+            if len(error_msg) > 300:
+                error_msg = error_msg[:300] + "..."
+            compact_result["error"] = error_msg
+
+        compact_results.append(compact_result)
+
     summary = {
         "timestamp": timestamp,
         "total_experiments": len(experiments),
@@ -629,7 +695,7 @@ def main(args):
         "successful": sum(1 for r in results if r.get("status") == "success"),
         "failed": sum(1 for r in results if r.get("status") == "failed"),
         "total_duration": sum(r.get("duration", 0) for r in results),
-        "results": results,
+        "results": compact_results,
     }
 
     if settings.get("save_summary", True):
@@ -647,6 +713,57 @@ def main(args):
         print(f"Successful: {summary['successful']}")
         print(f"Failed: {summary['failed']}")
         print(f"Total duration: {summary['total_duration']:.2f} seconds")
+
+        # メトリクスの概要を表示（成功した実験のみ）
+        successful_results = [r for r in results if r.get("status") == "success" and "metrics" in r]
+        if successful_results:
+            print(f"\n{'='*80}")
+            print(f"Metrics Summary (Successful Experiments)")
+            print(f"{'='*80}")
+
+            # グリッドサーチパラメータのヘッダーを生成
+            header_parts = ["Experiment"]
+            param_keys = []
+            # 最初の実験からgrid_paramsのキーを取得
+            if successful_results[0].get("grid_params"):
+                param_keys = list(successful_results[0]["grid_params"].keys())
+                header_parts.extend(param_keys)
+            header_parts.extend(["Val Acc", "Test Acc", "Test F1"])
+
+            # ヘッダーを表示
+            header_line = "  ".join(f"{h:<15}" for h in header_parts)
+            print(header_line)
+            print(f"{'-'*len(header_line)}")
+
+            for r in successful_results:
+                exp_name = r["name"]
+
+                # グリッドサーチパラメータを表示
+                line_parts = [f"{exp_name:<15}"]
+                grid_params = r.get("grid_params", {})
+                for key in (param_keys if param_keys else []):
+                    value = grid_params.get(key, "N/A")
+                    # 値を短縮表示（パスなど長い場合）
+                    if isinstance(value, str) and len(value) > 15:
+                        if "/" in value:
+                            value = value.split("/")[-1][:15]
+                        else:
+                            value = value[:15]
+                    line_parts.append(f"{str(value):<15}")
+
+                # メトリクスを表示
+                metrics = r.get("metrics", {})
+                val_acc = metrics.get("best_val_accuracy", 0.0)
+                test_acc = metrics.get("test_accuracy", 0.0)
+                test_f1 = metrics.get("test_f1", 0.0)
+                line_parts.extend([
+                    f"{val_acc:<15.4f}",
+                    f"{test_acc:<15.4f}",
+                    f"{test_f1:<15.4f}"
+                ])
+
+                print("  ".join(line_parts))
+
         print(f"\nSummary saved to: {summary_path}")
         print(f"{'='*80}\n")
 

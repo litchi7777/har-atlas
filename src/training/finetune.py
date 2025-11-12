@@ -7,6 +7,7 @@ Supervised Fine-tuning スクリプト
 import argparse
 import atexit
 import glob
+import importlib.util
 import shutil
 import signal
 import sys
@@ -25,49 +26,18 @@ from tqdm import tqdm
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
+# プロジェクトのモジュールをインポート
 from src.data.augmentations import get_augmentation_pipeline
 from src.data.batch_dataset import InMemoryDataset, MultiDeviceInMemoryDataset
 from src.models.backbones import SensorClassificationModel, MultiDeviceSensorClassificationModel
 
-# har-unified-datasetサブモジュールをパスに追加
-har_dataset_path = project_root / "har-unified-dataset"
-sys.path.insert(0, str(har_dataset_path))
+# har-unified-datasetからdataset_infoを直接ロード（名前空間の衝突を避けるため）
+har_dataset_info_path = project_root / "har-unified-dataset" / "src" / "dataset_info.py"
+spec = importlib.util.spec_from_file_location("har_dataset_info", har_dataset_info_path)
+har_dataset_info = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(har_dataset_info)
+DATASETS = har_dataset_info.DATASETS
 
-# データセットメタデータ（dataset_infoから抜粋）
-DATASETS = {
-    "DSADS": {
-        "n_classes": 19,
-        "labels": {
-            0: 'Sitting', 1: 'Standing', 2: 'Lying(Back)', 3: 'Lying(Right)',
-            4: 'StairsUp', 5: 'StairsDown', 6: 'Standing(Elevator, still)',
-            7: 'Moving(elevator)', 8: 'Walking(parking)',
-            9: 'Walking(Treadmill, Flat)', 10: 'Walking(Treadmill, Slope)',
-            11: 'Running(treadmill)', 12: 'Exercising(Stepper)',
-            13: 'Exercising(Cross trainer)', 14: 'Cycling(Exercise bike, Vertical)',
-            15: 'Cycling(Exercise bike, Horizontal)', 16: 'Rowing',
-            17: 'Jumping', 18: 'PlayingBasketball'
-        },
-    },
-    "MHEALTH": {
-        "n_classes": 12,
-        "labels": {
-            -1: 'Undefined',
-            0: 'Standing', 1: 'Sitting', 2: 'LyingDown', 3: 'Walking',
-            4: 'StairsUp', 5: 'WaistBendsForward', 6: 'FrontalElevationArms',
-            7: 'KneesBending', 8: 'Cycling', 9: 'Jogging',
-            10: 'Running', 11: 'JumpFrontBack'
-        },
-    },
-    "OPENPACK": {
-        "n_classes": 9,
-        "labels": {
-            -1: 'Undefined',  # 未定義/無操作/その他（operation=0,10）
-            0: 'Assemble', 1: 'Insert', 2: 'Put', 3: 'Walk',
-            4: 'Pick', 5: 'Scan', 6: 'Press', 7: 'Open',
-            8: 'Close'
-        },
-    },
-}
 from src.utils.common import count_parameters, get_device, set_seed
 from src.utils.config import load_config, validate_config
 from src.utils.logger import setup_logger

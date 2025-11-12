@@ -150,6 +150,11 @@ notebooks/outputs/
 # Claude Code temporary files
 .claude/
 
+# Analysis outputs (generated figures)
+analysis/figures/
+!analysis/figures/.gitkeep
+!analysis/figures/*/.gitkeep
+
 # Visualizations (generated HTML files)
 visualizations/*.html
 !visualizations/.gitkeep

@@ -267,13 +267,13 @@ class Reverse:
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (channels, time_steps) - Torch tensor
+            x: (channels, time_steps) or (batch, channels, time_steps) - Torch tensor
 
         Returns:
             拡張されたデータ
         """
-        # 時間軸（dim=1）に沿って反転
-        return torch.flip(x, dims=[1])
+        # 時間軸に沿って反転（最後の次元）
+        return torch.flip(x, dims=[-1])
 
 
 class MagnitudeWarping:

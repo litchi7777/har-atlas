@@ -150,17 +150,18 @@ def validate_sensor_data_config(sensor_config: Dict[str, Any], mode: str) -> Non
     if "batch_loader" in sensor_config:
         batch_loader_config = sensor_config["batch_loader"]
 
-        # data_root と datasets のチェック（新しい設定方式）
-        if "data_root" in sensor_config and "datasets" in sensor_config:
-            if not sensor_config["datasets"]:
-                raise ConfigValidationError("'datasets' list is empty in sensor_data config")
-        # dataset_patterns のチェック（従来の設定方式）
+        # data_root と dataset_location_pairs のチェック（新しい設定方式）
+        if "data_root" in sensor_config and "dataset_location_pairs" in sensor_config:
+            if not sensor_config["dataset_location_pairs"]:
+                raise ConfigValidationError("'dataset_location_pairs' list is empty in sensor_data config")
+        # dataset_patterns のチェック（従来の設定方式 - 後方互換性のため残す）
         elif "dataset_patterns" in batch_loader_config:
             if not batch_loader_config["dataset_patterns"]:
                 raise ConfigValidationError("'dataset_patterns' list is empty in batch_loader config")
         else:
             raise ConfigValidationError(
-                "Either 'data_root' + 'datasets' or 'dataset_patterns' must be provided in config"
+                "Either 'data_root' + 'dataset_location_pairs' or 'dataset_patterns' must be provided in config. "
+                "Example: dataset_location_pairs: [['dsads', 'LeftArm'], ['mhealth', 'chest']]"
             )
 
         if "sample_threshold" not in batch_loader_config:

@@ -6,14 +6,38 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-  datasets: ["nhanes"]
-  #datasets: ["openpack"]  # 使用するデータセット名
 
-  # センサー部位の設定
-  # - "all": すべてのデバイスを使用（マルチデバイスモデル）
-  # - ["hand"]: 特定のデバイスのみ使用（シングルデバイスモデル）
-  # - ["hand", "chest"]: 複数の特定デバイスを使用（マルチデバイスモデル）
-  sensor_location: ["all"]
+  # データセットとセンサー位置のペアを指定（必須）
+  # 各ペアは [データセット名, センサー位置] の形式
+  # 手・腕のセンサー位置 + NHANES（巨大データセット）
+  dataset_location_pairs:
+    # DSADS - 手・腕 (2 locations)
+    - ["dsads", "LeftArm"]
+    - ["dsads", "RightArm"]
+    # FORTHTrace - 手首 (2 locations)
+    - ["forthtrace", "LeftWrist"]
+    - ["forthtrace", "RightWrist"]
+    # LARA - 腕 (2 locations)
+    - ["lara", "LeftArm"]
+    - ["lara", "RightArm"]
+    # MEX - 手首 (1 location)
+    - ["mex", "Wrist"]
+    # MHEALTH - 手首 (1 location)
+    - ["mhealth", "RightWrist"]
+    # NHANES - 常に含める（巨大データセット）(1 location)
+    - ["nhanes", "PAX"]
+    # PAAL - 手首 (1 location)
+    - ["paal", "Wrist"]
+    # PAMAP2 - 手 (1 location)
+    - ["pamap2", "hand"]
+    # RealDisp - 腕 (4 locations)
+    - ["realdisp", "LeftLowerArm"]
+    - ["realdisp", "LeftUpperArm"]
+    - ["realdisp", "RightLowerArm"]
+    - ["realdisp", "RightUpperArm"]
+    # SelfBACK - 手首 (1 location)
+    - ["selfback", "Wrist"]
+    # 合計: 19ペア（手・腕: 18, NHANES: 1）
 
   # バッチローダー設定
   batch_loader:
@@ -50,17 +74,17 @@ augmentation:
 
 # Training
 training:
-  epochs: 50
-  learning_rate: 0.001
+  epochs: 100
+  learning_rate: 0.0001  # 継続学習のため学習率を下げる（0.001 → 0.0001）
   weight_decay: 0.0001
   optimizer: "adam"
   scheduler: "cosine"
-  warmup_epochs: 10
-  eta_min: 0.0005  # 最小学習率（初期値の1/2）
+  warmup_epochs: 5  # 継続学習なのでwarmupを短縮
+  eta_min: 0.00005  # 最小学習率（初期値の1/2）
   grad_clip_norm: 1.0  # 勾配クリッピング（1.0推奨、無効化する場合はnull）
 
 # Hardware
-device: "cuda:0"
+device: "cuda:3"
 mixed_precision: true
 
 # Checkpointing
@@ -88,22 +112,66 @@ wandb:
 seed: 42
 
 # Grid Search
-# PAMAP2/OpenPackのデバイス × バックボーン × SSLタスク × 事前学習パスでSSL事前学習
 # 実行: python train.py pretrain
+# 3つの身体部位で並列実験
 grid_search:
+  sensor_data:
+    dataset_location_pairs:
+      # 実験1: 手・腕 + NHANES（19ペア）
+      - [
+          ["dsads", "LeftArm"], ["dsads", "RightArm"],
+          ["forthtrace", "LeftWrist"], ["forthtrace", "RightWrist"],
+          ["lara", "LeftArm"], ["lara", "RightArm"],
+          ["mex", "Wrist"],
+          ["mhealth", "RightWrist"],
+          ["paal", "Wrist"],
+          ["pamap2", "hand"],
+          ["realdisp", "LeftLowerArm"], ["realdisp", "LeftUpperArm"],
+          ["realdisp", "RightLowerArm"], ["realdisp", "RightUpperArm"],
+          ["selfback", "Wrist"],
+          ["nhanes", "PAX"]
+        ]
+      # 実験2: 胴体・腰 + NHANES（9ペア）
+      - [
+          ["dsads", "Torso"],
+          ["forthtrace", "Torso"],
+          ["har70plus", "LowerBack"],
+          ["harth", "LowerBack"],
+          ["lara", "Neck"],
+          ["mhealth", "Chest"],
+          ["pamap2", "chest"],
+          ["realdisp", "Back"],
+          ["uschad", "Hip"],
+          ["nhanes", "PAX"]
+        ]
+      # 実験3: 足 + NHANES（14ペア）
+      - [
+          ["dsads", "LeftLeg"], ["dsads", "RightLeg"],
+          ["forthtrace", "LeftAnkle"], ["forthtrace", "RightThigh"],
+          ["har70plus", "RightThigh"],
+          ["harth", "RightThigh"],
+          ["lara", "LeftLeg"], ["lara", "RightLeg"],
+          ["mex", "Thigh"],
+          ["mhealth", "LeftAnkle"],
+          ["pamap2", "ankle"],
+          ["realdisp", "LeftCalf"], ["realdisp", "LeftThigh"],
+          ["realdisp", "RightCalf"], ["realdisp", "RightThigh"],
+          ["selfback", "Thigh"],
+          ["nhanes", "PAX"]
+        ]
+
+  model:
+    pretrained_path:
+      - null
   multitask:
     ssl_tasks:
-      - ["binary_permute", "binary_reverse", "binary_timewarp", "masking_time_channel"]
       - ["binary_permute", "binary_reverse", "binary_timewarp"]
-      - ["masking_time_channel"]
 
-# OpenPackで実験する場合は、以下のように変更してください:
-# 1. datasets: ["pamap2"] -> ["openpack"] に変更
-# 2. sensor_location: ["hand"], ["chest"], ["ankle"] -> ["atr01"], ["atr02"], ["atr03"], ["atr04"] に変更
 
 settings:
   stop_on_error: false
   save_summary: true
   summary_path: "logs/pretrain_experiments_summary.json"
   parallel: true  # GPU並列実行
-  max_workers: null  # null=利用可能なGPU全て、数値=最大並列数
+  max_workers: 4  # 1つのワーカーのみ（device設定のcuda:3を使用）
+  available_gpus: [0,1,2,3]  # 使用するGPUのリスト（例: [0, 1, 3]で複数GPU指定可能）

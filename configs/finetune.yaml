@@ -95,20 +95,27 @@ early_stopping:
 seed: 42
 
 # Grid Search
-# 4種類のcheckpointをTorsoデバイスで比較
+# run_20251111_072854の3つのチェックポイントを全センサー位置で比較
 grid_search:
   sensor_data:
+    datasets:
+      - ["dsads"]  # DSADSでファインチューニング
     sensor_location:
-      - "Torso"        # 胴体のみ（高速化のため1デバイスに絞る）
+      - "Torso"      # 胴体
+      - "LeftArm"    # 左腕
+      - "RightArm"   # 右腕
+      - "LeftLeg"    # 左脚
+      - "RightLeg"   # 右脚
   model:
     pretrained_path:
-      - "experiments/pretrain/run_20251105_055922/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp']/models/best_model.pth"
-      - "experiments/pretrain/run_20251105_055922/ssl_tasks=['masking_time_channel']/models/best_model.pth"
-      - "experiments/pretrain/run_20251105_055922/ssl_tasks=['binary_permute', 'binary_reverse', 'binary_timewarp', 'masking_time_channel']/models/best_model.pth"
+      - "experiments/pretrain/run_20251111_072854/exp_0/models/checkpoint_epoch_18.pth"
+      - "experiments/pretrain/run_20251111_072854/exp_1/models/checkpoint_epoch_44.pth"
+      - "experiments/pretrain/run_20251111_072854/exp_2/models/checkpoint_epoch_19.pth"
       - null  # ベースライン（ランダム初期化）
 settings:
   stop_on_error: false
   save_summary: true
   summary_path: "logs/finetune_experiments_summary.json"
   parallel: true  # GPU並列実行を有効化
-  max_workers: null  # null=利用可能なGPU全て、数値=最大並列数
+  max_workers: 4  # 4実験を並列実行
+  available_gpus: [0, 1, 2, 3]  # 使用するGPU

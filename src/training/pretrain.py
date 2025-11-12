@@ -54,8 +54,8 @@ DEFAULT_DATA_ROOT = "har-unified-dataset/data/processed"
 DEFAULT_SSL_TASKS = ["binary_permute", "binary_reverse", "binary_timewarp"]
 DEFAULT_TASK_WEIGHTS = [1.0, 1.0, 1.0]
 DEFAULT_APPLY_PROB = 0.5
-DEFAULT_N_SEGMENTS = 5  # 最適値: 5セグメント
-DEFAULT_MAX_WARP_FACTOR = 1.5  # 最適値: 1.5倍（±50%伸縮）
+DEFAULT_N_SEGMENTS = 5  # 均等分割のセグメント数
+DEFAULT_MAX_WARP_FACTOR = 1.5  # TimeWarping の最大ワープ係数
 LOG_INTERVAL = 10
 NUM_TASK_METERS = 3
 
@@ -141,11 +141,11 @@ def create_augmentation_transforms(
     aug_names = [task.replace("binary_", "") for task in binary_tasks]
 
     for aug_name in aug_names:
-        if aug_name == "permute":
+        if aug_name == "permute" or aug_name == "permute_fast":
             transforms["permute"] = Permutation(n_segments=DEFAULT_N_SEGMENTS)
         elif aug_name == "reverse":
             transforms["reverse"] = Reverse()
-        elif aug_name == "timewarp":
+        elif aug_name == "timewarp" or aug_name == "timewarp_fast":
             transforms["timewarp"] = TimeWarping(max_warp_factor=DEFAULT_MAX_WARP_FACTOR)
 
     # Maskingタスクの処理
@@ -170,13 +170,17 @@ def create_augmentation_transforms(
 
 
 def collect_data_paths(
-    data_root: str, datasets: List[str], exclude_patterns: List[str], logger
+    data_root: str,
+    dataset_location_pairs: List[List[str]],
+    exclude_patterns: List[str],
+    logger,
 ) -> List[str]:
     """データセットからファイルパスを収集
 
     Args:
         data_root: データルートディレクトリ
-        datasets: データセット名のリスト
+        dataset_location_pairs: (dataset, location)のペアのリスト
+            例: [["dsads", "LeftArm"], ["dsads", "RightArm"], ["mhealth", "LeftArm"]]
         exclude_patterns: 除外パターンのリスト
         logger: ロガー
 
@@ -186,18 +190,21 @@ def collect_data_paths(
     Raises:
         ValueError: データセットが空、またはファイルが見つからない場合
     """
-    if not datasets:
-        raise ValueError("datasets list is empty in sensor_data config")
-
-    # 各データセットからパスパターンを自動生成して収集
-    # データ構造: {dataset}/{USER}/{Device}/{Sensor}/X.npy
-    # ACCセンサーのみを使用（チャネル数を統一するため）
     all_paths = []
-    for dataset_name in datasets:
-        pattern = f"{data_root}/{dataset_name}/*/*/ACC/X.npy"
+
+    logger.info(f"Using dataset_location_pairs: {len(dataset_location_pairs)} pairs")
+
+    for pair in dataset_location_pairs:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(
+                f"Each pair in dataset_location_pairs must be [dataset, location], got: {pair}"
+            )
+        dataset_name, location = pair
+        # データ構造: {dataset}/{USER}/{location}/ACC/X.npy
+        pattern = f"{data_root}/{dataset_name}/*/{location}/ACC/X.npy"
         paths = sorted(glob.glob(pattern))
         logger.info(
-            f"Dataset '{dataset_name}' (ACC only): {pattern} -> {len(paths)} files"
+            f"Dataset '{dataset_name}', Location '{location}': {pattern} -> {len(paths)} files"
         )
         all_paths.extend(paths)
 
@@ -210,7 +217,7 @@ def collect_data_paths(
         ]
 
     if len(all_paths) == 0:
-        raise ValueError("No data files found")
+        raise ValueError("No data files found. Check dataset_location_pairs configuration.")
 
     logger.info(f"Total: {len(all_paths)} files")
 
@@ -341,9 +348,16 @@ def setup_batch_dataloaders(
     )
 
     # データパスを収集
+    dataset_location_pairs = sensor_config.get("dataset_location_pairs")
+    if dataset_location_pairs is None:
+        raise ValueError(
+            "dataset_location_pairs is required in sensor_data configuration. "
+            "Example: dataset_location_pairs: [['dsads', 'LeftArm'], ['mhealth', 'chest']]"
+        )
+
     all_paths = collect_data_paths(
         loader_config.data_root,
-        loader_config.datasets,
+        dataset_location_pairs,
         loader_config.exclude_patterns,
         logger,
     )
@@ -424,7 +438,7 @@ def apply_augmentations_batch(
         apply_mask = np.random.random(batch_size) < apply_prob  # shape: (batch_size,)
 
         if aug_name in transforms:
-            # バッチ全体に変換を適用（高速）
+            # バッチ全体に変換を適用
             x_augmented = torch.stack([transforms[aug_name](sample) for sample in x_base])
             # デバイスに明示的に転送
             x_augmented = x_augmented.to(device)

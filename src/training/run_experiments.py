@@ -511,13 +511,37 @@ def main(args):
     parallel = settings.get("parallel", False)
     max_workers = settings.get("max_workers", None)  # Noneの場合は利用可能なGPU数
     stop_on_error = settings.get("stop_on_error", False)
+    specified_gpus = settings.get("available_gpus", None)  # 使用するGPUのリスト
 
     # Run experiments
     results = []
 
     if parallel:
         # 並列実行モード
-        available_gpus = get_available_gpus()
+        # 優先順位: settings.available_gpus > device > 自動検出
+        if specified_gpus is not None:
+            # settings.available_gpusが指定されている場合（最優先）
+            if isinstance(specified_gpus, list):
+                available_gpus = specified_gpus
+                print(f"Using GPUs specified in settings.available_gpus: {available_gpus}")
+            else:
+                print(f"Warning: settings.available_gpus should be a list, got {type(specified_gpus)}. Using auto-detection.")
+                available_gpus = get_available_gpus()
+        else:
+            # base_configのdevice設定を確認
+            config_device = base_config.get("device", None)
+            if config_device and config_device.startswith("cuda:"):
+                # 設定ファイルで特定のGPUが指定されている場合、それを使用
+                try:
+                    gpu_id = int(config_device.split(":")[1])
+                    available_gpus = [gpu_id]
+                    print(f"Using GPU specified in device config: cuda:{gpu_id}")
+                except (ValueError, IndexError):
+                    # パースに失敗した場合は自動検出
+                    available_gpus = get_available_gpus()
+            else:
+                # device指定がない場合は自動検出
+                available_gpus = get_available_gpus()
 
         if not available_gpus:
             print("Warning: No available GPUs detected, falling back to sequential execution")

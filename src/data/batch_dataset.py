@@ -8,7 +8,7 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 
 
 class SubjectWiseLoader(Dataset):
@@ -17,17 +17,23 @@ class SubjectWiseLoader(Dataset):
 
     Pre-training用（ラベルなし）とFine-tuning用（ラベル付き）の両方に対応。
     ssl_tasksパラメータでマルチタスクSSLにも対応。
+
+    マルチデバイス対応:
+    - シングルデバイス: paths = ["/path/to/X.npy", ...]
+    - マルチデバイス: paths = [("/path/to/device1/X.npy", "/path/to/device2/X.npy"), ...]
     """
 
     def __init__(
         self,
-        paths: List[str],
+        paths: List[Union[str, Tuple[str, ...]]],
         sample_threshold: int,
         ssl_tasks: Optional[List[str]] = None,
     ):
         """
         Args:
             paths: .npy ファイルのパスリスト（複数データセット可）
+                   - シングルデバイス: List[str]
+                   - マルチデバイス: List[Tuple[str, ...]]
             sample_threshold: 最小サンプル数の閾値
             ssl_tasks: SSLタスクのリスト（互換性のため残すが未使用）
         """
@@ -40,6 +46,9 @@ class SubjectWiseLoader(Dataset):
         self.sample_threshold = sample_threshold
         self.ssl_tasks = ssl_tasks
 
+        # マルチデバイスかどうかを判定
+        self.is_multi_device = isinstance(self.paths[0], tuple)
+
     def __getitem__(self, index: int) -> torch.Tensor:
         """
         指定されたインデックスのファイルから、sample_threshold分のデータを取得
@@ -49,21 +58,57 @@ class SubjectWiseLoader(Dataset):
 
         Returns:
             data: [sample_threshold, channels, time_steps]
+                  - シングルデバイス: channels = 3
+                  - マルチデバイス: channels = 3 * デバイス数
         """
         path = self.paths[index]
-        X = np.load(path, mmap_mode="r")
 
-        # ランダムにsample_threshold分のサンプルを取得
-        # サンプル数が閾値未満の場合は重複サンプリング（replace=True）を使用
-        num_samples = X.shape[0]
-        replace = num_samples < self.sample_threshold
-        sampled_indices = np.random.choice(num_samples, self.sample_threshold, replace=replace)
-        data = X[sampled_indices]
+        if self.is_multi_device:
+            # マルチデバイス: 複数のファイルを読み込んでチャネル方向に結合
+            device_data_list = []
+            num_samples = None
 
-        # NaN を 0 に置き換え
-        data = np.nan_to_num(data, nan=0.0)
+            for device_path in path:
+                X = np.load(device_path, mmap_mode="r")
+                device_data_list.append(X)
 
-        return torch.tensor(data, dtype=torch.float32)
+                # 最初のデバイスのサンプル数を基準にする
+                if num_samples is None:
+                    num_samples = X.shape[0]
+
+            # ランダムにsample_threshold分のサンプルを取得
+            replace = num_samples < self.sample_threshold
+            sampled_indices = np.random.choice(num_samples, self.sample_threshold, replace=replace)
+
+            # 各デバイスのデータをサンプリングして結合
+            sampled_device_data = []
+            for X in device_data_list:
+                # サンプルインデックスを使用（全デバイスで同じサンプル）
+                sampled_data = X[sampled_indices]
+                sampled_device_data.append(sampled_data)
+
+            # チャネル方向に結合 (sample_threshold, 3*num_devices, time_steps)
+            data = np.concatenate(sampled_device_data, axis=1)
+
+            # NaN を 0 に置き換え
+            data = np.nan_to_num(data, nan=0.0)
+
+            return torch.tensor(data, dtype=torch.float32)
+
+        else:
+            # シングルデバイス: 従来通りの処理
+            X = np.load(path, mmap_mode="r")
+
+            # ランダムにsample_threshold分のサンプルを取得
+            num_samples = X.shape[0]
+            replace = num_samples < self.sample_threshold
+            sampled_indices = np.random.choice(num_samples, self.sample_threshold, replace=replace)
+            data = X[sampled_indices]
+
+            # NaN を 0 に置き換え
+            data = np.nan_to_num(data, nan=0.0)
+
+            return torch.tensor(data, dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.paths)

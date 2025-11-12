@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -171,21 +171,24 @@ def create_augmentation_transforms(
 
 def collect_data_paths(
     data_root: str,
-    dataset_location_pairs: List[List[str]],
+    dataset_location_pairs: List[List],
     exclude_patterns: List[str],
     logger,
-) -> List[str]:
+) -> List[Union[str, Tuple[str, ...]]]:
     """データセットからファイルパスを収集
 
     Args:
         data_root: データルートディレクトリ
         dataset_location_pairs: (dataset, location)のペアのリスト
-            例: [["dsads", "LeftArm"], ["dsads", "RightArm"], ["mhealth", "LeftArm"]]
+            - シングルデバイス: [["dsads", "LeftArm"], ["mhealth", "Chest"]]
+            - マルチデバイス: [["dsads", ["LeftArm", "RightArm"]]]
         exclude_patterns: 除外パターンのリスト
         logger: ロガー
 
     Returns:
         収集されたファイルパスのリスト
+        - シングルデバイスの場合: 各ファイルパスを個別に返す
+        - マルチデバイスの場合: 同一ユーザーの複数デバイスファイルをまとめて返す
 
     Raises:
         ValueError: データセットが空、またはファイルが見つからない場合
@@ -197,24 +200,78 @@ def collect_data_paths(
     for pair in dataset_location_pairs:
         if not isinstance(pair, list) or len(pair) != 2:
             raise ValueError(
-                f"Each pair in dataset_location_pairs must be [dataset, location], got: {pair}"
+                f"Each pair in dataset_location_pairs must be [dataset, location] or [dataset, [loc1, loc2]], got: {pair}"
             )
         dataset_name, location = pair
-        # データ構造: {dataset}/{USER}/{location}/ACC/X.npy
-        pattern = f"{data_root}/{dataset_name}/*/{location}/ACC/X.npy"
-        paths = sorted(glob.glob(pattern))
-        logger.info(
-            f"Dataset '{dataset_name}', Location '{location}': {pattern} -> {len(paths)} files"
-        )
-        all_paths.extend(paths)
+
+        # locationが文字列（シングルデバイス）かリスト（マルチデバイス）か判定
+        if isinstance(location, str):
+            # シングルデバイス: 従来通りの処理
+            pattern = f"{data_root}/{dataset_name}/*/{location}/ACC/X.npy"
+            paths = sorted(glob.glob(pattern))
+            logger.info(
+                f"Dataset '{dataset_name}', Location '{location}' (single): {len(paths)} files"
+            )
+            all_paths.extend(paths)
+
+        elif isinstance(location, list):
+            # マルチデバイス: 同一ユーザーの複数デバイスファイルを収集
+            # まず最初のlocationでユーザーIDを取得
+            first_location = location[0]
+            pattern = f"{data_root}/{dataset_name}/*/{first_location}/ACC/X.npy"
+            first_paths = sorted(glob.glob(pattern))
+
+            logger.info(
+                f"Dataset '{dataset_name}', Locations {location} (multi-device): "
+                f"Found {len(first_paths)} users"
+            )
+
+            # 各ユーザーについて、全てのlocationのファイルが存在するか確認
+            for first_path in first_paths:
+                # パスからユーザーIDを抽出
+                # 例: data_root/dsads/USER00001/LeftArm/ACC/X.npy -> USER00001
+                parts = Path(first_path).parts
+                dataset_idx = parts.index(dataset_name)
+                user_id = parts[dataset_idx + 1]
+
+                # 全てのlocationのファイルが存在するか確認
+                device_paths = []
+                all_exist = True
+                for loc in location:
+                    device_path = f"{data_root}/{dataset_name}/{user_id}/{loc}/ACC/X.npy"
+                    if os.path.exists(device_path):
+                        device_paths.append(device_path)
+                    else:
+                        all_exist = False
+                        logger.warning(
+                            f"Missing file for user {user_id}, location {loc}: {device_path}"
+                        )
+                        break
+
+                # 全てのデバイスのファイルが存在する場合のみ追加
+                if all_exist:
+                    # マルチデバイスの場合はタプルとして格納（後で結合するため）
+                    all_paths.append(tuple(device_paths))
+                else:
+                    logger.warning(f"Skipping user {user_id} due to missing device data")
+
+        else:
+            raise ValueError(f"Invalid location type: {type(location)}, expected str or list")
 
     # 除外パターンのフィルタリング
     if exclude_patterns:
-        all_paths = [
-            p
-            for p in all_paths
-            if not any(exclude in p for exclude in exclude_patterns)
-        ]
+        filtered_paths = []
+        for p in all_paths:
+            # マルチデバイスの場合はタプル、シングルデバイスは文字列
+            if isinstance(p, tuple):
+                # タプル内のいずれかのパスに除外パターンが含まれる場合はスキップ
+                if not any(any(exclude in path for exclude in exclude_patterns) for path in p):
+                    filtered_paths.append(p)
+            else:
+                # 文字列の場合は従来通り
+                if not any(exclude in p for exclude in exclude_patterns):
+                    filtered_paths.append(p)
+        all_paths = filtered_paths
 
     if len(all_paths) == 0:
         raise ValueError("No data files found. Check dataset_location_pairs configuration.")
@@ -225,7 +282,7 @@ def collect_data_paths(
 
 
 def create_data_loaders(
-    paths: List[str],
+    paths: List[Union[str, Tuple[str, ...]]],
     config: DataLoaderConfig,
     use_multitask: bool,
     ssl_tasks: List[str],

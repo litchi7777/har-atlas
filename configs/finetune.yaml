@@ -6,18 +6,11 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-  datasets: ["dsads"]  # 使用するデータセット名（grid_searchで上書き）
 
-  # センサー装着部位の設定
-  # - "all": 全デバイス使用（マルチエンコーダーモデル）
-  # - "atr01": 単一デバイス使用（シングルエンコーダーモデル）
-  # - ["atr01", "atr02"]: 指定デバイスのみ使用（マルチエンコーダーモデル）
-  sensor_location: "all"  # 全デバイス使用
-
-  # 使用するセンサータイプ（現在はACCのみ対応）
-  # - "ACC": 加速度センサー
-  # - ["ACC", "GYRO"]: 複数センサー（将来拡張用）
-  sensor_types: ["ACC"]
+  # データセットとセンサー位置のペア（grid_searchで上書き）
+  # 各ペアは [データセット名, センサー位置] の形式
+  dataset_location_pairs:
+    - ["dsads", "Torso"]  # デフォルト: DSADS Torso
 
   # バッチローダー設定
   batch_loader:
@@ -52,7 +45,7 @@ training:
   scheduler: "step"  # step, cosine, plateau
   step_size: 20
   gamma: 0.1
-  max_samples_per_epoch: null  # 制限なし（全データ使用）
+  max_samples_per_epoch: 5000  # 1エポックあたり5000サンプルに制限（学習時間短縮）
 
 # Loss Function
 loss:
@@ -95,27 +88,25 @@ early_stopping:
 seed: 42
 
 # Grid Search
-# run_20251111_072854の3つのチェックポイントを全センサー位置で比較
+# 1エポックあたりのサンプル数の比較実験（エポック数：20で固定）
 grid_search:
   sensor_data:
-    datasets:
-      - ["dsads"]  # DSADSでファインチューニング
-    sensor_location:
-      - "Torso"      # 胴体
-      - "LeftArm"    # 左腕
-      - "RightArm"   # 右腕
-      - "LeftLeg"    # 左脚
-      - "RightLeg"   # 右脚
+    dataset_location_pairs:
+      # DSADS Torsoで固定（シングルデバイス）
+      - [["dsads", "Torso"]]
   model:
     pretrained_path:
-      - "experiments/pretrain/run_20251111_072854/exp_0/models/checkpoint_epoch_18.pth"
-      - "experiments/pretrain/run_20251111_072854/exp_1/models/checkpoint_epoch_44.pth"
-      - "experiments/pretrain/run_20251111_072854/exp_2/models/checkpoint_epoch_19.pth"
-      - null  # ベースライン（ランダム初期化）
+      - null  # ランダム初期化のみ
+  training:
+    epochs:
+      - 20  # エポック数を20で固定
+    max_samples_per_epoch:
+      - 40000  # 超大量（8倍のデータ）
+      - 80000  # 極大量（16倍のデータ）
 settings:
   stop_on_error: false
   save_summary: true
-  summary_path: "logs/finetune_experiments_summary.json"
+  # summary_pathを指定しない場合、自動的にexperiments/*/run_*/summary.jsonに保存される
   parallel: true  # GPU並列実行を有効化
-  max_workers: 4  # 4実験を並列実行
-  available_gpus: [0, 1, 2, 3]  # 使用するGPU
+  max_workers: 2  # 2実験を並列実行（max_samples_per_epoch: 40k, 80k）
+  available_gpus: [0, 1]  # 使用するGPU（2つ）

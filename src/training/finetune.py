@@ -347,6 +347,48 @@ def collect_labeled_data_paths(
     return train_paths, val_paths, test_paths, dataset_labels
 
 
+def extract_datasets_and_locations_from_pairs(
+    dataset_location_pairs: List[List],
+) -> tuple:
+    """dataset_location_pairsからdatasetsとlocationsを抽出
+
+    Args:
+        dataset_location_pairs: [[dataset, location], ...] or [[dataset, [loc1, loc2]], ...]
+            - ["dsads", "Torso"]: シングルデバイス
+            - ["dsads", ["Torso", "RightArm"]]: マルチデバイス
+
+    Returns:
+        (datasets, locations, is_multi_device):
+            - datasets: ユニークなデータセット名のリスト
+            - locations: ロケーションのリスト（マルチの場合はリストのリスト）
+            - is_multi_device: マルチデバイスモードかどうか
+    """
+    if not dataset_location_pairs:
+        raise ValueError("dataset_location_pairs is empty")
+
+    datasets = []
+    locations = []
+    is_multi_device = False
+
+    for pair in dataset_location_pairs:
+        dataset, location = pair
+        datasets.append(dataset)
+
+        if isinstance(location, list):
+            # マルチデバイス
+            locations.extend(location)
+            is_multi_device = True
+        else:
+            # シングルデバイス
+            locations.append(location)
+
+    # ユニークなデータセットとロケーション
+    datasets = sorted(set(datasets))
+    locations = sorted(set(locations))
+
+    return datasets, locations, is_multi_device
+
+
 def get_device_locations_from_config(
     sensor_location: Any,
     data_root: str,
@@ -607,6 +649,36 @@ def setup_batch_dataloaders(
             pin_memory=True,
             drop_last=False,
         )
+
+        # Validationもmax_samples_per_epochの1/4に制限
+        max_val_samples = max_samples_per_epoch // 4
+
+        logger.info(f"Limiting validation samples: {max_val_samples} (out of {len(val_dataset)})")
+
+        val_sampler = RandomSampler(
+            val_dataset,
+            replacement=True,
+            num_samples=min(max_val_samples, len(val_dataset))
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            sampler=val_sampler,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
+
+        # Testは全データを使用
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
     else:
         # 制限なし、通常のシャッフル
         train_loader = DataLoader(
@@ -618,23 +690,23 @@ def setup_batch_dataloaders(
             drop_last=False,
         )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=False,
-    )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
 
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=False,
-    )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
 
     # 入力形状を取得
     in_channels, sequence_length = get_input_shape(train_dataset)
@@ -724,6 +796,36 @@ def setup_multi_device_dataloaders(
             pin_memory=True,
             drop_last=False,
         )
+
+        # Validationもmax_samples_per_epochの1/4に制限
+        max_val_samples = max_samples_per_epoch // 4
+
+        logger.info(f"Limiting validation samples: {max_val_samples} (out of {len(val_dataset)})")
+
+        val_sampler = RandomSampler(
+            val_dataset,
+            replacement=True,
+            num_samples=min(max_val_samples, len(val_dataset))
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            sampler=val_sampler,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
+
+        # Testは全データを使用
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
     else:
         # 制限なし、通常のシャッフル
         train_loader = DataLoader(
@@ -735,23 +837,23 @@ def setup_multi_device_dataloaders(
             drop_last=False,
         )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=False,
-    )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
 
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=False,
-    )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=False,
+        )
 
     # 入力形状を取得（最初のデバイスのデータから）
     sample_device_data_list, _ = train_dataset[0]
@@ -1094,18 +1196,34 @@ def main(args: argparse.Namespace) -> None:
     device = get_device(config["device"])
     logger.info(f"Using device: {device}")
 
-    # sensor_location設定を確認してシングルデバイスかマルチデバイスかを判定
-    sensor_location = config.get("sensor_data", {}).get("sensor_location", None)
-    is_multi_device = False
-    device_locations = None
+    # dataset_location_pairsから設定を抽出
+    sensor_config = config.get("sensor_data", {})
 
-    # マルチデバイスモードの判定条件:
-    # 1. sensor_location="all" の場合
-    # 2. sensor_locationがリストで複数要素の場合
-    if sensor_location == "all":
-        is_multi_device = True
-    elif isinstance(sensor_location, list) and len(sensor_location) > 1:
-        is_multi_device = True
+    # dataset_location_pairsがある場合は新形式
+    if "dataset_location_pairs" in sensor_config:
+        datasets, locations, is_multi_device = extract_datasets_and_locations_from_pairs(
+            sensor_config["dataset_location_pairs"]
+        )
+        # 設定を更新（既存のコードとの互換性のため）
+        sensor_config["datasets"] = datasets
+        sensor_config["sensor_location"] = locations if is_multi_device else locations[0] if locations else "all"
+        device_locations = locations
+        logger.info(f"Using dataset_location_pairs format:")
+        logger.info(f"  Datasets: {datasets}")
+        logger.info(f"  Locations: {locations}")
+    else:
+        # 従来形式（後方互換性）
+        sensor_location = sensor_config.get("sensor_location", None)
+        is_multi_device = False
+        device_locations = None
+
+        # マルチデバイスモードの判定条件:
+        # 1. sensor_location="all" の場合
+        # 2. sensor_locationがリストで複数要素の場合
+        if sensor_location == "all":
+            is_multi_device = True
+        elif isinstance(sensor_location, list) and len(sensor_location) > 1:
+            is_multi_device = True
 
     logger.info(f"Mode: {'Multi-device' if is_multi_device else 'Single-device'}")
 

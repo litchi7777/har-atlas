@@ -1,305 +1,229 @@
-# Analysis - データ分析・可視化フレームワーク
+# Analysis Scripts
 
-このディレクトリには、HARプロジェクトのための包括的な分析ツール群が含まれています。
+HARFoundationプロジェクトの分析スクリプト集です。
 
-## 📁 ディレクトリ構造
+## ディレクトリ構造
 
 ```
 analysis/
-├── utils.py                    # 共通ユーティリティ関数
-├── dataset_distribution.py     # データセット分布の可視化
-├── visualize_embeddings.py     # 特徴空間の可視化（t-SNE/UMAP）
-├── model_performance.py        # モデル性能の詳細分析
-├── feature_analysis.py         # 特徴量の詳細分析
-├── data_quality.py             # データ品質の評価
-└── figures/                    # 出力画像
-    ├── performance/
-    ├── features/
-    ├── data_quality/
-    └── embeddings/
+├── common/                    # 共通ユーティリティモジュール（★リファクタリング版）
+│   ├── __init__.py
+│   ├── model_utils.py         # モデル読み込み・特徴抽出
+│   ├── data_utils.py          # データ読み込み・処理
+│   ├── viz_utils.py           # 可視化ユーティリティ
+│   └── README.md              # 詳細な使用方法
+│
+├── embedding_explorer/        # インタラクティブ埋め込み可視化
+│   ├── extract_features.py   # 特徴量抽出（★リファクタリング版）
+│   ├── server.py              # 可視化サーバー
+│   ├── templates/             # HTMLテンプレート
+│   └── data/                  # 抽出済み特徴量（.gitignore対象）
+│
+├── visualize_embeddings.py   # 埋め込み可視化（★リファクタリング版）
+├── visualize_finetune_comparison.py  # ファインチューニング比較
+├── report_f1_comparison.py   # F1スコア比較レポート
+│
+├── analyze.py                 # 総合分析スクリプト
+├── dataset_distribution.py    # データセット分布分析
+├── feature_analysis.py        # 特徴量分析
+├── model_performance.py       # モデル性能分析
+├── data_quality.py            # データ品質チェック
+├── utils.py                   # 旧ユーティリティ（互換性のため残存）
+│
+└── figures/                   # 生成された図（.gitignore対象）
 ```
 
-## 🎯 分析スクリプトの概要
+## リファクタリング概要
 
-### 1. **共通ユーティリティ** (`utils.py`)
+### 変更内容
 
-全スクリプトで共有される関数群：
-- データセット・モデルの読み込み
-- 特徴抽出
-- プロジェクト構造のナビゲーション
-- 出力フォーマット
+1. **共通モジュールの作成** (`analysis/common/`)
+   - 重複コードを削減（約300行削減）
+   - モデル読み込み、データ処理、可視化の共通化
+   - テスト・保守が容易に
 
-### 2. **データセット分布分析** (`dataset_distribution.py`)
+2. **主要スクリプトのリファクタリング**
+   - `visualize_embeddings.py` - 共通モジュールを使用
+   - `embedding_explorer/extract_features.py` - 共通モジュールを使用
 
-各データセット・身体部位のセンサーデータ分布を可視化し、データセット間の特性の違いを分析します。
+3. **旧バージョンのバックアップ**
+   - `visualize_embeddings_old.py`
+   - `embedding_explorer/extract_features_old.py`
 
-#### 主な機能
+### 移行ガイド
 
-1. **個別データセット分析**
-   - 各軸の振幅分布（ヒストグラム）
-   - 統計量の箱ひげ図
-   - 活動クラス別の時系列サンプル
-   - クラス分布（サンプル数）
-
-2. **データセット間比較**
-   - 信号の変動性（標準偏差）
-   - 活動クラス数
-   - データセットサイズ
-   - 振幅分布の比較（バイオリンプロット）
-
-#### 使用方法
+**既存スクリプトの使用方法は変わりません！**
 
 ```bash
-# 個別データセット・部位の分析
-python analysis/dataset_distribution.py --dataset dsads --location Torso
-
-# 全データセット・部位を分析（個別の可視化のみ）
-python analysis/dataset_distribution.py --all
-
-# 全データセット・部位を分析 + クロスデータセット比較
-python analysis/dataset_distribution.py --all --compare
-
-# 比較のみ生成
-python analysis/dataset_distribution.py --compare
+# 以前と同じコマンドで動作
+python analysis/visualize_embeddings.py --model path/to/model.pth --method umap
+python analysis/embedding_explorer/extract_features.py --model path/to/model.pth
 ```
 
-#### 出力例
+## 主要スクリプト
 
-```
-analysis/figures/
-├── dsads_Torso_distribution.png          # 個別データセット分析
-├── mhealth_Chest_distribution.png
-├── pamap2_hand_distribution.png
-├── ...
-└── cross_dataset_comparison.png          # データセット間比較
-```
+### 1. 埋め込み可視化 (`visualize_embeddings.py`)
 
-#### 可視化の内容
+事前学習済みモデルの特徴表現をUMAP/t-SNEで可視化。
 
-**個別データセット分析図（例: `dsads_Torso_distribution.png`）:**
-- 左上: 各軸（X/Y/Z）の振幅分布ヒストグラム
-- 右上: 各軸の統計量（箱ひげ図）
-- 左下: 活動クラス別サンプル時系列（X軸のみ）
-- 右下: 活動クラス分布（サンプル数の棒グラフ）
+```bash
+# 基本的な使用
+python analysis/visualize_embeddings.py \\
+    --model experiments/pretrain/run_*/exp_0/models/checkpoint.pth \\
+    --method umap \\
+    --color-by body_part
 
-**クロスデータセット比較図（`cross_dataset_comparison.png`）:**
-- 左上: データセット別の信号変動性（標準偏差）
-- 右上: データセット別の活動クラス数
-- 左下: データセット別のサンプル数
-- 右下: 振幅分布の比較（バイオリンプロット、最大8データセット）
+# 特定のデータセット・部位のみ
+python analysis/visualize_embeddings.py \\
+    --model experiments/pretrain/run_*/exp_0/models/checkpoint.pth \\
+    --datasets dsads mhealth pamap2 \\
+    --locations Torso Wrist
 
-## 📈 統計情報の出力
-
-スクリプトを実行すると、ターミナルに以下の統計情報が出力されます：
-
-```
-================================================================================
-Dataset: DSADS - Torso
-================================================================================
-Data shape: (9120, 3, 125) (N_samples, N_channels, N_timesteps)
-Label shape: (9120,)
-Number of samples: 9120
-Time steps: 125
-
-Number of classes: 19
-Class distribution:
-  Sitting                       :    480 samples ( 5.26%)
-  Standing                      :    480 samples ( 5.26%)
-  Lying(Back)                   :    480 samples ( 5.26%)
-  ...
-
-Sensor data statistics (all axes):
-  X-axis:
-    Mean:     0.0234 G
-    Std:      0.4567 G
-    Min:     -2.3456 G
-    Max:      3.1234 G
-    Range:    5.4690 G
-  Y-axis:
-    ...
-  Z-axis:
-    ...
+# 複数モデルの比較
+python analysis/visualize_embeddings.py \\
+    --models model1.pth model2.pth model3.pth \\
+    --method umap \\
+    --color-by dataset
 ```
 
-## 🎯 分析の目的
+**出力:** `analysis/figures/embeddings_*.png` (静的画像)、`*.html` (インタラクティブ)
 
-1. **データセット特性の理解**
-   - 各データセットのセンサーデータ分布を把握
-   - 活動クラスのバランスを確認
-   - データ品質の評価
+### 2. 特徴量抽出 (`embedding_explorer/extract_features.py`)
 
-2. **データセット間の違いの可視化**
-   - Fine-tuning性能の差（0.58～0.87）の原因を探る
-   - データ収集方法、ノイズ特性の違いを視覚的に確認
-   - データセット選択の根拠を提供
+全データセットから特徴量を抽出してファイルに保存。
 
-3. **事前学習データの選択**
-   - 多様性の評価
-   - 類似性の定量化
-   - データ統合の戦略検討
+```bash
+python analysis/embedding_explorer/extract_features.py \\
+    --model experiments/pretrain/run_*/exp_0/models/checkpoint.pth \\
+    --window-size 60 \\
+    --max-samples 100 \\
+    --output-dir analysis/embedding_explorer/data \\
+    --compute-umap
+```
 
-## 📝 依存関係
+**出力:**
+- `features_2.0s.npz` - 特徴量（NumPy配列）
+- `metadata_2.0s.json` - メタデータ（データセット名、ラベルなど）
+- `umap_2.0s.npz` - UMAP埋め込み（オプション）
 
-スクリプトは以下のライブラリを使用します：
+### 3. インタラクティブ可視化サーバー (`embedding_explorer/server.py`)
+
+ブラウザでインタラクティブに埋め込みを探索。
+
+```bash
+python analysis/embedding_explorer/server.py
+# ブラウザで http://localhost:5001 を開く
+```
+
+### 4. ファインチューニング比較 (`visualize_finetune_comparison.py`)
+
+複数のファインチューニング実験のF1スコアを比較。
+
+```bash
+python analysis/visualize_finetune_comparison.py \\
+    --runs run_20251112_* \\
+    --output-dir analysis/figures
+```
+
+### 5. F1スコア比較レポート (`report_f1_comparison.py`)
+
+実験結果のF1スコアを表形式で出力。
+
+```bash
+python analysis/report_f1_comparison.py \\
+    --finetune-runs run_20251112_*
+```
+
+## 共通モジュールの使用方法
+
+詳細は [`analysis/common/README.md`](common/README.md) を参照。
+
+### クイックスタート
 
 ```python
-numpy
-matplotlib
-seaborn
+from analysis.common import (
+    load_pretrained_model,
+    extract_features,
+    load_sensor_data,
+    reduce_dimensions,
+)
+
+# モデル読み込み（ウィンドウサイズ自動検出）
+encoder, window_size = load_pretrained_model('path/to/model.pth')
+
+# データ読み込み
+X, y, _ = load_sensor_data('dsads', 'Torso', window_size=window_size)
+
+# 特徴抽出
+features = extract_features(encoder, X)
+
+# 次元削減
+embedded = reduce_dimensions(features, method='umap')
 ```
 
-プロジェクトの`requirements.txt`に含まれているため、追加のインストールは不要です。
+## データセット情報
 
-## 🔧 カスタマイズ
+使用可能なデータセット：
+- DSADS, MHEALTH, PAMAP2, HARTH, RealDisp, USCHAD
+- FORTHTRACE, HAR70PLUS, LARA, MEX, PAAL, SELFBACK
+- NHANES（巨大データセット、サンプリング推奨）
 
-スクリプトを編集して、以下のカスタマイズが可能です：
+身体部位カテゴリ：
+- **Wrist** - 手首
+- **Ankle** - 足首
+- **Arm** - 腕（上腕、前腕）
+- **Leg** - 脚（太もも、すね）
+- **Front** - 胴体前面（胸、腰）
+- **Back** - 背中
+- **Head** - 頭部
+- **Phone** - ポケット（スマートフォン）
 
-- **図のスタイル**: `sns.set_style()`, `sns.set_context()`
-- **カラーマップ**: `plt.cm.*`
-- **サンプリング数**: `n_samples_per_class`, ランダムサンプリング数
-- **出力形式**: `.png`, `.pdf`, `.svg`
+## トラブルシューティング
 
-### 3. **特徴空間の可視化** (`visualize_embeddings.py`)
-
-事前学習済みモデルの特徴表現を次元削減して可視化します。
-
-**機能**:
-- t-SNE/UMAPによる2次元可視化
-- データセット別・身体部位別・アクティビティ別の色分け
-- 複数モデルの比較
-
-**使用例**:
-```bash
-# 単一モデルの可視化
-python analysis/visualize_embeddings.py \
-  --model experiments/pretrain/run_*/exp_0/models/best_model.pth \
-  --method umap --color-by body_part
-
-# 複数モデルの比較
-python analysis/visualize_embeddings.py \
-  --models exp_0/models/best_model.pth exp_1/models/best_model.pth \
-  --compare
-```
-
-### 4. **モデル性能分析** (`model_performance.py`)
-
-学習済みモデルの性能を多角的に分析します。
-
-**機能**:
-- 学習曲線（損失・精度の推移）
-- 混同行列とクラス別メトリクス
-- データセット別・身体部位別の性能比較
-- 複数実験の比較
-
-**使用例**:
-```bash
-# 単一実験の分析
-python analysis/model_performance.py \
-  --experiment experiments/finetune/run_*/exp_0
-
-# 複数実験の比較
-python analysis/model_performance.py \
-  --experiments exp_0 exp_1 exp_2 --compare
-```
-
-### 5. **特徴量分析** (`feature_analysis.py`)
-
-エンコーダーが学習した特徴表現を詳細に分析します。
-
-**機能**:
-- 特徴量の活性化パターン
-- 特徴量の重要度分析（Fisher判別比）
-- レイヤー別の特徴分布
-- クラス別・データセット別の特徴統計
-
-**使用例**:
-```bash
-# 事前学習モデルの特徴分析
-python analysis/feature_analysis.py \
-  --model experiments/pretrain/run_*/exp_0/models/best_model.pth
-
-# 複数モデルの比較
-python analysis/feature_analysis.py \
-  --models model1.pth model2.pth --compare
-```
-
-### 6. **データ品質分析** (`data_quality.py`)
-
-データセットの品質を多角的に評価します。
-
-**機能**:
-- 欠損値・異常値の検出
-- クラスバランスの評価
-- 信号品質の評価（SNR、周波数特性）
-- データセット間の品質比較
-
-**使用例**:
-```bash
-# 単一データセットの分析
-python analysis/data_quality.py --dataset dsads --location Torso
-
-# 全データセットの比較
-python analysis/data_quality.py --all --compare
-```
-
----
-
-## 🚀 統一エントリーポイント
-
-すべての分析を1つのコマンドで実行できる統一インターフェース：
+### メモリ不足
 
 ```bash
-# メインの分析スクリプト
-python analysis/analyze.py <analysis_type> [options]
+# サンプル数を減らす
+--max-samples 50  # デフォルト: 100
+
+# ユーザー数を減らす（大規模データセット用）
+# スクリプト内で max_users=10 を指定
 ```
 
-**利用可能な分析タイプ**:
-- `data`: データセット分布と品質分析
-- `embeddings`: 特徴空間の可視化
-- `performance`: モデル性能分析
-- `features`: 特徴量の詳細分析
-- `all`: 全分析を実行
+### ウィンドウサイズが合わない
 
-**使用例**:
 ```bash
-# データセット分析
-python analysis/analyze.py data --dataset dsads --location Torso
-
-# 特徴空間の可視化
-python analysis/analyze.py embeddings \
-  --model experiments/pretrain/run_*/exp_0/models/best_model.pth
-
-# モデル性能分析
-python analysis/analyze.py performance \
-  --experiment experiments/finetune/run_*/exp_0
-
-# 全分析を実行
-python analysis/analyze.py all \
-  --model experiments/pretrain/run_*/exp_0/models/best_model.pth \
-  --experiment experiments/finetune/run_*/exp_0
+# 明示的にウィンドウサイズを指定
+--window-size 60
 ```
 
----
+### CUDAメモリ不足
 
-## 📈 出力
+```bash
+# CPUを使用
+--device cpu
 
-すべての分析結果は `analysis/figures/` 以下に保存されます：
-
-```
-analysis/figures/
-├── dataset_distribution/    # データセット分布の図
-├── data_quality/           # データ品質レポート
-├── embeddings/             # 特徴空間の可視化
-├── performance/            # モデル性能分析
-└── features/               # 特徴量分析
+# バッチサイズを減らす（スクリプト内で batch_size=128）
 ```
 
----
+## 開発者向け
 
-## 💡 今後の拡張案
+### 新しい分析スクリプトの追加
 
-- [ ] インタラクティブな可視化（Plotly）
-- [ ] 自動レポート生成（PDF/HTML）
-- [ ] A/Bテスト機能（モデル比較の統計的検定）
-- [ ] リアルタイムモニタリング（学習中の可視化）
-- [ ] カスタム分析スクリプトのプラグイン機構
+1. `analysis/common/` の共通モジュールを活用
+2. Docstringを記述
+3. `--help`オプションで使い方を表示
+4. このREADMEに使用例を追記
+
+### コーディング規約
+
+- 共通化できるコードは `analysis/common/` に移動
+- 各スクリプトは独立して実行可能に
+- 出力は `analysis/figures/` に保存
+- 大きなデータは `.gitignore` に追加
+
+## 参考リンク
+
+- [プロジェクトREADME](../README.md)
+- [共通モジュール詳細](common/README.md)
+- [データセット情報](../har-unified-dataset/README.md)

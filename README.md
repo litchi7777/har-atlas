@@ -156,6 +156,31 @@ python visualize_server.py
 
 ## 使用方法
 
+### クイックスタート - 分析
+
+**全ての分析を統一インターフェース`analysis/main.py`から実行できます：**
+
+```bash
+# 埋め込み可視化
+python analysis/main.py visualize --model experiments/pretrain/run_*/models/checkpoint.pth
+
+# 特徴量抽出
+python analysis/main.py extract --model experiments/pretrain/run_*/models/checkpoint.pth
+
+# F1スコア比較レポート
+python analysis/main.py report
+
+# ファインチューニング比較
+python analysis/main.py compare --runs run_20251112_*
+
+# ヘルプ
+python analysis/main.py --help
+```
+
+詳細は [analysis/README.md](analysis/README.md) を参照。
+
+---
+
 ### トレーニングの実行
 
 **推奨コマンド（これだけで完結）**：

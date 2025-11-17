@@ -54,15 +54,57 @@ analysis/
    - 必要に応じて復元可能
    - メインディレクトリがスッキリ
 
-### よく使うスクリプト
+### 統一インターフェース
 
-日常的に使う分析スクリプトは3つだけ：
+**全ての分析を`main.py`から実行できます！**
 
-1. **visualize_embeddings.py** - 埋め込み可視化（UMAP/t-SNE）
-2. **report_f1_comparison.py** - F1スコア比較レポート
-3. **visualize_finetune_comparison.py** - ファインチューニング結果比較
+```bash
+# ヘルプ表示
+python analysis/main.py --help
 
-## 主要スクリプト
+# 各コマンドのヘルプ
+python analysis/main.py visualize --help
+python analysis/main.py extract --help
+```
+
+### よく使うコマンド
+
+#### 1. 埋め込み可視化
+
+```bash
+python analysis/main.py visualize \\
+    --model experiments/pretrain/run_*/models/checkpoint.pth \\
+    --method umap \\
+    --color-by body_part
+```
+
+#### 2. 特徴量抽出
+
+```bash
+python analysis/main.py extract \\
+    --model experiments/pretrain/run_*/models/checkpoint.pth \\
+    --window-size 60 \\
+    --compute-umap
+```
+
+#### 3. F1スコア比較レポート
+
+```bash
+python analysis/main.py report
+```
+
+#### 4. ファインチューニング比較
+
+```bash
+python analysis/main.py compare \\
+    --runs run_20251112_*
+```
+
+---
+
+## 個別スクリプトの使用（オプション）
+
+`main.py`を使わず、個別スクリプトを直接実行することも可能です。
 
 ### 1. 埋め込み可視化 (`visualize_embeddings.py`)
 

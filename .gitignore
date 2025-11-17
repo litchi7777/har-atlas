@@ -165,6 +165,9 @@ analysis/figures/
 analysis/embedding_explorer/data/*.npz
 analysis/embedding_explorer/data/*.npy
 
+# Analysis archive (low-usage scripts)
+analysis/.archive/
+
 # Visualizations (generated HTML files)
 visualizations/*.html
 !visualizations/.gitkeep

@@ -6,7 +6,7 @@ HARFoundationプロジェクトの分析スクリプト集です。
 
 ```
 analysis/
-├── common/                    # 共通ユーティリティモジュール（★リファクタリング版）
+├── common/                    # ★共通ユーティリティモジュール
 │   ├── __init__.py
 │   ├── model_utils.py         # モデル読み込み・特徴抽出
 │   ├── data_utils.py          # データ読み込み・処理
@@ -14,28 +14,31 @@ analysis/
 │   └── README.md              # 詳細な使用方法
 │
 ├── embedding_explorer/        # インタラクティブ埋め込み可視化
-│   ├── extract_features.py   # 特徴量抽出（★リファクタリング版）
+│   ├── extract_features.py   # 特徴量抽出
+│   ├── extract_all_features.py  # 全ウィンドウサイズの特徴抽出
 │   ├── server.py              # 可視化サーバー
 │   ├── templates/             # HTMLテンプレート
 │   └── data/                  # 抽出済み特徴量（.gitignore対象）
 │
-├── visualize_embeddings.py   # 埋め込み可視化（★リファクタリング版）
+├── visualize_embeddings.py   # ★埋め込み可視化（メイン）
 ├── visualize_finetune_comparison.py  # ファインチューニング比較
 ├── report_f1_comparison.py   # F1スコア比較レポート
 │
-├── analyze.py                 # 総合分析スクリプト
-├── dataset_distribution.py    # データセット分布分析
-├── feature_analysis.py        # 特徴量分析
-├── model_performance.py       # モデル性能分析
-├── data_quality.py            # データ品質チェック
-├── utils.py                   # 旧ユーティリティ（互換性のため残存）
+├── .archive/                  # 使用頻度の低いスクリプト（.gitignore対象）
+│   ├── README.md              # アーカイブの説明
+│   ├── data_quality.py        # データ品質チェック
+│   ├── dataset_distribution.py  # データセット分布分析
+│   ├── feature_analysis.py    # 特徴量分析
+│   ├── model_performance.py   # モデル性能分析
+│   ├── utils.py               # 旧ユーティリティ
+│   └── analyze.py             # 統合分析インターフェース
 │
 └── figures/                   # 生成された図（.gitignore対象）
 ```
 
 ## リファクタリング概要
 
-### 変更内容
+### 変更内容（2024-11-17整理）
 
 1. **共通モジュールの作成** (`analysis/common/`)
    - 重複コードを削減（約300行削減）
@@ -46,19 +49,18 @@ analysis/
    - `visualize_embeddings.py` - 共通モジュールを使用
    - `embedding_explorer/extract_features.py` - 共通モジュールを使用
 
-3. **旧バージョンのバックアップ**
-   - `visualize_embeddings_old.py`
-   - `embedding_explorer/extract_features_old.py`
+3. **使用頻度の低いスクリプトをアーカイブ** (`analysis/.archive/`)
+   - 6つの古いスクリプトを移動
+   - 必要に応じて復元可能
+   - メインディレクトリがスッキリ
 
-### 移行ガイド
+### よく使うスクリプト
 
-**既存スクリプトの使用方法は変わりません！**
+日常的に使う分析スクリプトは3つだけ：
 
-```bash
-# 以前と同じコマンドで動作
-python analysis/visualize_embeddings.py --model path/to/model.pth --method umap
-python analysis/embedding_explorer/extract_features.py --model path/to/model.pth
-```
+1. **visualize_embeddings.py** - 埋め込み可視化（UMAP/t-SNE）
+2. **report_f1_comparison.py** - F1スコア比較レポート
+3. **visualize_finetune_comparison.py** - ファインチューニング結果比較
 
 ## 主要スクリプト
 

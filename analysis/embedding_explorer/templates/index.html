@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embedding Explorer</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .controls {
+            padding: 30px;
+            border-bottom: 1px solid #e0e0e0;
+            background: #fafafa;
+        }
+
+        .control-section {
+            margin-bottom: 25px;
+        }
+
+        .control-section h3 {
+            margin-bottom: 12px;
+            color: #333;
+            font-size: 1.1em;
+            border-left: 4px solid #667eea;
+            padding-left: 10px;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        label {
+            font-weight: 500;
+            color: #555;
+            margin-right: 8px;
+        }
+
+        select, button {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        select {
+            min-width: 150px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            font-weight: 600;
+            padding: 12px 30px;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            background: white;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-item label {
+            margin: 0;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .select-all-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .select-all-btn:hover {
+            background: #218838;
+        }
+
+        .plot-container {
+            padding: 30px;
+            min-height: 700px;
+        }
+
+        #plot {
+            width: 100%;
+            height: 700px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 100px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #f5c6cb;
+            margin: 20px;
+        }
+
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Embedding Space Explorer</h1>
+            <p>Interactive Motion Primitive Analysis Tool</p>
+        </div>
+
+        <div class="controls">
+            <!-- Basic Settings -->
+            <div class="control-section">
+                <h3>⚙️ Basic Settings</h3>
+                <div class="control-group">
+                    <label>Window Size:</label>
+                    <select id="windowSize">
+                        <option value="5.0s">5.0s (150 samples)</option>
+                        <option value="2.0s">2.0s (60 samples)</option>
+                        <option value="1.0s">1.0s (30 samples)</option>
+                        <option value="0.5s">0.5s (15 samples)</option>
+                    </select>
+
+                    <label>Reduction Method:</label>
+                    <select id="method">
+                        <option value="umap">UMAP</option>
+                        <option value="tsne">t-SNE</option>
+                        <option value="pca">PCA</option>
+                    </select>
+
+                    <label>Color By:</label>
+                    <select id="colorBy">
+                        <option value="dataset">Dataset</option>
+                        <option value="activity">Activity</option>
+                        <option value="location">Location</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Activity Filter -->
+            <div class="control-section">
+                <h3>🏃 Activity Filter</h3>
+                <div class="control-group" style="margin-bottom: 10px;">
+                    <input type="text" id="activitySearch" placeholder="🔍 Search activities..."
+                           style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+                </div>
+                <button class="select-all-btn" onclick="toggleAll('activities', true)">Select All</button>
+                <button class="select-all-btn" onclick="toggleAll('activities', false)" style="background: #dc3545;">Deselect All</button>
+                <div id="activityCheckboxes" class="checkbox-group">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+
+            <!-- Location Filter -->
+            <div class="control-section">
+                <h3>📍 Location Filter</h3>
+                <button class="select-all-btn" onclick="toggleAll('locations', true)">Select All</button>
+                <button class="select-all-btn" onclick="toggleAll('locations', false)" style="background: #dc3545;">Deselect All</button>
+                <div id="locationCheckboxes" class="checkbox-group">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+
+            <!-- Info Display -->
+            <div class="control-section">
+                <div id="info" class="info" style="display:none;"></div>
+            </div>
+        </div>
+
+        <div class="plot-container">
+            <div id="plot"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentWindowSize = '5.0s';
+        let allActivities = [];
+        let allLocations = [];
+
+        // Load metadata on window size change
+        document.getElementById('windowSize').addEventListener('change', function() {
+            currentWindowSize = this.value;
+            loadMetadata(currentWindowSize);
+        });
+
+        // Auto-visualize on settings change
+        document.getElementById('method').addEventListener('change', visualize);
+        document.getElementById('colorBy').addEventListener('change', visualize);
+
+        // Load initial metadata and visualize
+        loadMetadata(currentWindowSize);
+
+        function loadMetadata(windowSize) {
+            fetch(`/api/metadata/${windowSize}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showError(data.error);
+                        return;
+                    }
+
+                    // Store all activities and locations for later use
+                    allActivities = [];
+                    Object.values(data.activities_by_dataset).forEach(acts => {
+                        allActivities = allActivities.concat(acts);
+                    });
+                    allActivities = [...new Set(allActivities)]; // Remove duplicates
+                    allLocations = data.locations;
+
+                    // Populate checkboxes
+                    populateActivityCheckboxesByDataset('activityCheckboxes', data.activities_by_dataset);
+                    populateCheckboxes('locationCheckboxes', data.locations, 'locations');
+
+                    // Add event listeners to checkboxes for auto-update
+                    addCheckboxListeners();
+
+                    // Setup activity search functionality
+                    setupActivitySearch();
+
+                    // Show info
+                    document.getElementById('info').textContent =
+                        `Total samples available: ${data.total_samples.toLocaleString()}`;
+                    document.getElementById('info').style.display = 'block';
+
+                    // Auto-visualize after loading metadata
+                    visualize();
+                })
+                .catch(error => {
+                    showError('Failed to load metadata: ' + error);
+                });
+        }
+
+        function populateCheckboxes(containerId, items, groupName) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'checkbox-item';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `${groupName}_${item}`;
+                checkbox.value = item;
+                checkbox.checked = true;
+
+                const label = document.createElement('label');
+                label.htmlFor = checkbox.id;
+                label.textContent = item;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                container.appendChild(div);
+            });
+        }
+
+        function populateActivityCheckboxesByDataset(containerId, activitiesByDataset) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            // データセットごとにセクションを作成
+            Object.keys(activitiesByDataset).sort().forEach(dataset => {
+                // データセット名のヘッダー（チェックボックス付き）
+                const header = document.createElement('div');
+                header.className = 'dataset-header';
+                header.setAttribute('data-dataset', dataset);
+                header.style.gridColumn = '1 / -1';
+                header.style.fontWeight = 'bold';
+                header.style.marginTop = '10px';
+                header.style.marginBottom = '5px';
+                header.style.paddingLeft = '5px';
+                header.style.borderBottom = '1px solid #ddd';
+                header.style.color = '#667eea';
+                header.style.display = 'flex';
+                header.style.alignItems = 'center';
+
+                // データセット全体のチェックボックス
+                const datasetCheckbox = document.createElement('input');
+                datasetCheckbox.type = 'checkbox';
+                datasetCheckbox.id = `dataset_${dataset}`;
+                datasetCheckbox.checked = true;
+                datasetCheckbox.style.marginRight = '8px';
+                datasetCheckbox.addEventListener('change', function() {
+                    // このデータセット配下のすべてのアクティビティをトグル
+                    const activities = activitiesByDataset[dataset];
+                    activities.forEach(activity => {
+                        // IDをdataset_activityの形式で検索
+                        const activityCheckbox = document.getElementById(`activities_${dataset}_${activity}`);
+                        if (activityCheckbox) {
+                            activityCheckbox.checked = this.checked;
+                        }
+                    });
+                    updateHighlighting();
+                });
+
+                const datasetLabel = document.createElement('label');
+                datasetLabel.htmlFor = datasetCheckbox.id;
+                datasetLabel.textContent = dataset;
+                datasetLabel.style.cursor = 'pointer';
+                datasetLabel.style.margin = '0';
+
+                header.appendChild(datasetCheckbox);
+                header.appendChild(datasetLabel);
+                container.appendChild(header);
+
+                // アクティビティのチェックボックス
+                const activities = activitiesByDataset[dataset];
+                activities.forEach(activity => {
+                    const div = document.createElement('div');
+                    div.className = 'checkbox-item activity-item';
+                    div.style.paddingLeft = '15px';
+                    // 検索用のデータ属性を追加
+                    div.setAttribute('data-dataset', dataset);
+                    div.setAttribute('data-activity', activity.toLowerCase());
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    // IDをdataset_activityの形式にして一意にする
+                    checkbox.id = `activities_${dataset}_${activity}`;
+                    // valueは実際に送信される値（サーバー側と一致させる）
+                    checkbox.value = activity;
+                    checkbox.checked = true;
+
+                    const label = document.createElement('label');
+                    label.htmlFor = checkbox.id;
+                    label.textContent = activity;
+
+                    div.appendChild(checkbox);
+                    div.appendChild(label);
+                    container.appendChild(div);
+                });
+            });
+        }
+
+        function addCheckboxListeners() {
+            // Checkboxes only update highlighting, not full re-render
+            const allCheckboxes = document.querySelectorAll('input[type="checkbox"]');
+            allCheckboxes.forEach(cb => {
+                cb.addEventListener('change', updateHighlighting);
+            });
+        }
+
+        let currentPlotData = null;
+
+        function updateHighlighting() {
+            console.log('[updateHighlighting] Called');
+
+            if (!currentPlotData) {
+                console.log('[updateHighlighting] No currentPlotData, exiting');
+                return;
+            }
+
+            const selectedActivities = getSelectedValues('activities');
+            const selectedLocations = getSelectedValues('locations');
+
+            console.log('[updateHighlighting] Selected activities:', selectedActivities.length);
+            console.log('[updateHighlighting] Selected locations:', selectedLocations.length);
+            console.log('[updateHighlighting] Total traces:', currentPlotData.data.length);
+
+            // Update trace opacity based on selection (grayed out instead of hidden)
+            const opacityArray = currentPlotData.data.map((trace, idx) => {
+                // trace.nameには "dataset/activity/location" が入っている
+                const parts = trace.name.split('/');
+                if (parts.length < 3) {
+                    return 0.7;  // Default opacity
+                }
+
+                const dataset = parts[0];
+                const activity = parts[1];
+                const location = parts[2];
+
+                const activityMatch = selectedActivities.includes(activity);
+                const locationMatch = selectedLocations.includes(location);
+
+                // Selected: normal opacity (0.7), Deselected: very faint (0.1)
+                const opacity = (activityMatch && locationMatch) ? 0.7 : 0.1;
+
+                if (idx < 3) {
+                    console.log(`[updateHighlighting] Trace ${idx}: ${trace.name} -> opacity=${opacity}`);
+                }
+
+                return opacity;
+            });
+
+            console.log('[updateHighlighting] Opacity array sample:', opacityArray.slice(0, 5));
+            console.log('[updateHighlighting] Calling Plotly.restyle...');
+
+            // Update marker opacity
+            Plotly.restyle('plot', {'marker.opacity': opacityArray});
+
+            console.log('[updateHighlighting] Done');
+        }
+
+        function toggleAll(groupName, checked) {
+            const checkboxes = document.querySelectorAll(`input[id^="${groupName}_"]`);
+            checkboxes.forEach(cb => cb.checked = checked);
+
+            // アクティビティフィルターの場合、データセットチェックボックスも連動
+            if (groupName === 'activities') {
+                const datasetCheckboxes = document.querySelectorAll('input[id^="dataset_"]');
+                datasetCheckboxes.forEach(cb => cb.checked = checked);
+            }
+
+            // Update highlighting only
+            updateHighlighting();
+        }
+
+        function getSelectedValues(groupName) {
+            const checkboxes = document.querySelectorAll(`input[id^="${groupName}_"]:checked`);
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function visualize() {
+            const windowSize = document.getElementById('windowSize').value;
+            const method = document.getElementById('method').value;
+            const colorBy = document.getElementById('colorBy').value;
+
+            // Show loading
+            document.getElementById('plot').innerHTML = '<div class="loading">Updating visualization</div>';
+
+            // Send request with ALL activities and locations to get full dataset
+            fetch('/api/visualize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    window_size: windowSize,
+                    method: method,
+                    color_by: colorBy,
+                    selected_activities: allActivities,  // Request ALL data
+                    selected_locations: allLocations     // Request ALL data
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                // Store current plot data for fast highlighting updates
+                currentPlotData = data.graph;
+
+                // Render plot (data.graph is already an object, no need to parse)
+                Plotly.newPlot('plot', data.graph.data, data.graph.layout);
+
+                // Apply initial highlighting based on current checkbox state
+                updateHighlighting();
+
+                // Show info
+                document.getElementById('info').textContent =
+                    `Total: ${data.n_samples.toLocaleString()} samples`;
+                document.getElementById('info').style.display = 'block';
+            })
+            .catch(error => {
+                showError('Visualization failed: ' + error);
+            });
+        }
+
+        function showError(message) {
+            document.getElementById('plot').innerHTML =
+                `<div class="error">❌ Error: ${message}</div>`;
+        }
+
+        function setupActivitySearch() {
+            const searchInput = document.getElementById('activitySearch');
+            searchInput.addEventListener('input', function() {
+                const searchTerm = this.value.toLowerCase();
+
+                // すべてのアクティビティアイテムを取得
+                const activityItems = document.querySelectorAll('.activity-item');
+                const datasetHeaders = document.querySelectorAll('.dataset-header');
+
+                // データセットごとに可視アクティビティをカウント
+                const visibleCountByDataset = {};
+
+                activityItems.forEach(item => {
+                    const activityName = item.getAttribute('data-activity');
+                    const dataset = item.getAttribute('data-dataset');
+
+                    // 検索条件に一致するかチェック
+                    if (activityName.includes(searchTerm)) {
+                        item.style.display = '';  // 表示
+                        visibleCountByDataset[dataset] = (visibleCountByDataset[dataset] || 0) + 1;
+                    } else {
+                        item.style.display = 'none';  // 非表示
+                    }
+                });
+
+                // データセットヘッダーの表示/非表示
+                datasetHeaders.forEach(header => {
+                    const dataset = header.getAttribute('data-dataset');
+                    if (visibleCountByDataset[dataset] > 0) {
+                        header.style.display = '';  // アクティビティが1つでも表示されていれば表示
+                    } else {
+                        header.style.display = 'none';  // すべて非表示なら隠す
+                    }
+                });
+            });
+        }
+    </script>
+</body>
+</html>

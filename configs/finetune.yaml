@@ -112,8 +112,8 @@ grid_search:
       - [["forthtrace", "LeftAnkle"]]  # FORTHTRACE: 左足首 (16クラス)
   model:
     pretrained_path:
-      # run_20251111_072854 (NHANES単独学習)
-      - "experiments/pretrain/run_20251111_072854/exp_2/models/checkpoint_epoch_44.pth"  # NHANESのみ
+      # Supervised Learning (from scratch) - ベースライン
+      - null  # 事前学習なし（ランダム初期化）のみ実行
 
 settings:
   stop_on_error: false

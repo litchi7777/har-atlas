@@ -2,15 +2,36 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🎯 現在の研究方針（最優先で読むこと）
+
+**新規セッション開始時は必ずこれを読んでください：**
+
+📍 **[docs/RESEARCH_STATUS.md](docs/RESEARCH_STATUS.md)** - 研究の全て（常に更新）
+   - 研究概要（目標・差別化・採択確率75-80%）
+   - 8週間タイムライン
+   - 現在の進行状況（完了/進行中/次のタスク）
+   - ブロッカー・課題
+   - 重要な技術決定
+   - **このファイルだけ読めばOK**
+
+**投稿先**: IMWUT 2025/2/1締め切り（残り8週間）
+
+**現在のフェーズ**: Week 1 - 技術検証とVQ実装開始
+
+---
+
 ## Repository Overview
 
 **har-foundation** - Human Activity Recognition (HAR) プロジェクト
 
-**目的**: Self-Supervised Learning (SSL) を用いた事前学習とファインチューニングによる行動クラス分類
+**既存の目的**: Self-Supervised Learning (SSL) を用いた事前学習とファインチューニングによる行動クラス分類
+**新しい研究目標**: 30データセットで学習したFoundation Modelに階層的VQを追加し、データドリブン+LLMでMotion Primitiveを発見する
 
 **技術スタック**:
 - PyTorch 2.0+
 - Weights & Biases (実験追跡)
+- 30データセット整備済み
+- Foundation Model学習済み（MTL + SSL）
 
 Repository: `git@github.com:litchi7777/har-foundation.git`
 

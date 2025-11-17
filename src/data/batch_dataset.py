@@ -28,6 +28,9 @@ class SubjectWiseLoader(Dataset):
         paths: List[Union[str, Tuple[str, ...]]],
         sample_threshold: int,
         ssl_tasks: Optional[List[str]] = None,
+        window_size: Optional[int] = None,
+        original_window_size: Optional[int] = None,
+        window_clip_strategy: str = "random",
     ):
         """
         Args:
@@ -36,6 +39,9 @@ class SubjectWiseLoader(Dataset):
                    - マルチデバイス: List[Tuple[str, ...]]
             sample_threshold: 最小サンプル数の閾値
             ssl_tasks: SSLタスクのリスト（互換性のため残すが未使用）
+            window_size: クリップ後のウィンドウサイズ（時間ステップ数）
+            original_window_size: 元のウィンドウサイズ（時間ステップ数）
+            window_clip_strategy: クリップ戦略（"random", "center", "start", "end"）
         """
         # 全てのパスを追加（サンプル数に関わらず）
         self.paths = paths
@@ -45,6 +51,18 @@ class SubjectWiseLoader(Dataset):
 
         self.sample_threshold = sample_threshold
         self.ssl_tasks = ssl_tasks
+
+        # ウィンドウクリップ設定
+        self.window_size = window_size
+        self.original_window_size = original_window_size
+        self.window_clip_strategy = window_clip_strategy
+
+        # クリップが有効かどうか
+        self.enable_clip = (
+            window_size is not None
+            and original_window_size is not None
+            and window_size < original_window_size
+        )
 
         # マルチデバイスかどうかを判定
         self.is_multi_device = isinstance(self.paths[0], tuple)
@@ -93,6 +111,10 @@ class SubjectWiseLoader(Dataset):
             # NaN を 0 に置き換え
             data = np.nan_to_num(data, nan=0.0)
 
+            # ウィンドウクリッピング（有効な場合）
+            if self.enable_clip:
+                data = self._clip_windows(data)
+
             return torch.tensor(data, dtype=torch.float32)
 
         else:
@@ -108,7 +130,56 @@ class SubjectWiseLoader(Dataset):
             # NaN を 0 に置き換え
             data = np.nan_to_num(data, nan=0.0)
 
+            # ウィンドウクリッピング（有効な場合）
+            if self.enable_clip:
+                data = self._clip_windows(data)
+
             return torch.tensor(data, dtype=torch.float32)
+
+    def _clip_windows(self, data: np.ndarray) -> np.ndarray:
+        """
+        ウィンドウをクリップする
+
+        Args:
+            data: [sample_threshold, channels, original_window_size]
+
+        Returns:
+            clipped_data: [sample_threshold, channels, window_size]
+        """
+        num_samples, num_channels, time_steps = data.shape
+
+        if time_steps != self.original_window_size:
+            raise ValueError(
+                f"Expected time_steps={self.original_window_size}, got {time_steps}"
+            )
+
+        # クリップ開始位置を決定
+        max_start = self.original_window_size - self.window_size
+
+        if self.window_clip_strategy == "random":
+            # 各サンプルでランダムな開始位置を選択
+            start_indices = np.random.randint(0, max_start + 1, size=num_samples)
+            clipped_data = np.zeros((num_samples, num_channels, self.window_size), dtype=data.dtype)
+            for i, start in enumerate(start_indices):
+                clipped_data[i] = data[i, :, start : start + self.window_size]
+
+        elif self.window_clip_strategy == "center":
+            # 中央から切り出し
+            start = max_start // 2
+            clipped_data = data[:, :, start : start + self.window_size]
+
+        elif self.window_clip_strategy == "start":
+            # 先頭から切り出し
+            clipped_data = data[:, :, : self.window_size]
+
+        elif self.window_clip_strategy == "end":
+            # 末尾から切り出し
+            clipped_data = data[:, :, -self.window_size :]
+
+        else:
+            raise ValueError(f"Unknown clip strategy: {self.window_clip_strategy}")
+
+        return clipped_data
 
     def __len__(self) -> int:
         return len(self.paths)

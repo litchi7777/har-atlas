@@ -151,12 +151,19 @@ notebooks/outputs/
 .claude/
 
 # Documentation (handoff documents, notes)
-docs/
+docs
+docs/archive/
+# Keep only RESEARCH_STATUS.md tracked
+!docs/RESEARCH_STATUS.md
 
 # Analysis outputs (generated figures)
 analysis/figures/
 !analysis/figures/.gitkeep
 !analysis/figures/*/.gitkeep
+
+# Analysis data (embeddings, features)
+analysis/embedding_explorer/data/*.npz
+analysis/embedding_explorer/data/*.npy
 
 # Visualizations (generated HTML files)
 visualizations/*.html

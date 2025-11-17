@@ -151,7 +151,7 @@ class Resnet(nn.Module):
     Reference: https://github.com/anonymous/har-foundation
     """
 
-    def __init__(self, n_channels: int = 3, foundationUK: bool = False):
+    def __init__(self, n_channels: int = 3, foundationUK: bool = False, micro_window: bool = False, nano_window: bool = False):
         super(Resnet, self).__init__()
 
         # Architecture definition. Each tuple defines
@@ -163,20 +163,38 @@ class Resnet(nn.Module):
         # - ResBlock's kernel size of 5
         # - downsampling factor of 3
         # - downsampling filter order of 1
-        cgf = [
-            (64, 5, 2, 5, 2, 2),
-            (128, 5, 2, 5, 2, 2),
-            (256, 5, 2, 5, 3, 1),
-            (256, 5, 2, 5, 3, 1),
-            (512, 5, 0, 5, 3, 1),
-        ]
 
-        if foundationUK:
+        if nano_window:
+            # 超小ウィンドウ用設定（15サンプル: 15→8→4→2）
+            # より浅い3層構造、ResBlockなし
+            cgf = [
+                (128, 3, 0, 3, 2, 1),  # kernel=3, down=2: 15→8
+                (256, 3, 0, 3, 2, 1),  # kernel=3, down=2: 8→4
+                (512, 3, 0, 3, 2, 1),  # kernel=3, down=2: 4→2
+            ]
+        elif micro_window:
+            # 小ウィンドウ用設定（30サンプル: 30→15→8→4、60サンプル: 60→30→15→8）
+            cgf = [
+                (64, 3, 1, 3, 2, 1),   # kernel=3, down=2: 30→15 or 60→30
+                (128, 3, 1, 3, 2, 1),  # kernel=3, down=2: 15→8 or 30→15
+                (256, 3, 1, 3, 2, 1),  # kernel=3, down=2: 8→4 or 15→8
+                (512, 3, 0, 3, 2, 1),  # kernel=3, down=2: 4→2 or 8→4
+            ]
+        elif foundationUK:
             cgf = [
                 (64, 5, 2, 5, 2, 2),
                 (128, 5, 2, 5, 2, 2),
                 (256, 5, 2, 5, 5, 1),
                 (512, 5, 2, 5, 5, 1),
+            ]
+        else:
+            # デフォルト設定（150サンプル用）
+            cgf = [
+                (64, 5, 2, 5, 2, 2),
+                (128, 5, 2, 5, 2, 2),
+                (256, 5, 2, 5, 3, 1),
+                (256, 5, 2, 5, 3, 1),
+                (512, 5, 0, 5, 3, 1),
             ]
 
         self.output_dim = 512

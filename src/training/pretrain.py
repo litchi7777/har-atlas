@@ -288,6 +288,9 @@ def create_data_loaders(
     ssl_tasks: List[str],
     specific_transforms: Optional[Dict[str, Any]] = None,
     apply_prob: float = DEFAULT_APPLY_PROB,
+    window_size: Optional[int] = None,
+    original_window_size: Optional[int] = None,
+    window_clip_strategy: str = "random",
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """データローダーを作成
 
@@ -298,6 +301,9 @@ def create_data_loaders(
         ssl_tasks: SSLタスクのリスト
         specific_transforms: 拡張変換の辞書
         apply_prob: 拡張適用確率
+        window_size: クリップ後のウィンドウサイズ
+        original_window_size: 元のウィンドウサイズ
+        window_clip_strategy: クリップ戦略
 
     Returns:
         (train_loader, val_loader, test_loader)
@@ -307,6 +313,9 @@ def create_data_loaders(
         paths,
         sample_threshold=config.sample_threshold,
         ssl_tasks=ssl_tasks if use_multitask else None,
+        window_size=window_size,
+        original_window_size=original_window_size,
+        window_clip_strategy=window_clip_strategy,
     )
 
     # DataLoaderを作成（複数の被験者データを1バッチに含める）
@@ -419,6 +428,12 @@ def setup_batch_dataloaders(
         logger,
     )
 
+    # ウィンドウクリップ設定を取得
+    window_size = sensor_config.get("window_size")
+    original_window_size = sensor_config.get("original_window_size")
+    window_clip_config = sensor_config.get("window_clip", {})
+    window_clip_strategy = window_clip_config.get("strategy", "random")
+
     # データローダーを作成
     apply_prob = multitask_config.get("apply_prob", DEFAULT_APPLY_PROB)
     train_loader, val_loader, test_loader = create_data_loaders(
@@ -428,6 +443,9 @@ def setup_batch_dataloaders(
         ssl_tasks,
         specific_transforms,
         apply_prob,
+        window_size=window_size,
+        original_window_size=original_window_size,
+        window_clip_strategy=window_clip_strategy,
     )
 
     # 入力形状を取得
@@ -815,7 +833,11 @@ def create_model(
         # バックボーンを作成
         if backbone_name == "resnet":
             from src.models.backbones import Resnet
-            backbone = Resnet(n_channels=in_channels, foundationUK=False)
+            # ウィンドウサイズに応じて適切なアーキテクチャを自動選択
+            nano_window = sequence_length < 20   # 15サンプル用
+            micro_window = 20 <= sequence_length < 100  # 30, 60サンプル用
+            backbone = Resnet(n_channels=in_channels, foundationUK=False,
+                            micro_window=micro_window, nano_window=nano_window)
         elif backbone_name == "resnet1d":
             from src.models.backbones import ResNet1D
             backbone = ResNet1D(in_channels, num_classes=hidden_dim, dropout=0.0)

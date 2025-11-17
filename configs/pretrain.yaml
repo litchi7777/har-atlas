@@ -7,6 +7,15 @@ sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
 
+  # ウィンドウサイズ設定
+  window_size: 60  # デフォルト: 2.0秒 @ 30Hz（grid_searchでオーバーライド）
+  original_window_size: 150  # 元データの5.0秒 @ 30Hz
+
+  # ウィンドウクリップ設定（5秒→指定サイズへ）
+  window_clip:
+    enabled: true
+    strategy: "random"  # random, center, start, end
+
   # データセットとセンサー位置のペアを指定（必須）
   # 各ペアは [データセット名, センサー位置] の形式
   # 手・腕のセンサー位置 + NHANES（巨大データセット）
@@ -105,60 +114,22 @@ wandb:
   job_type: "pretrain"
   entity: null
   name: null
-  tags: []
-  notes: null
+  tags: ["window_size_experiments", "primitive_discovery"]
+  notes: "Pre-training with multiple window sizes (2.0s, 1.0s, 0.5s) for motion primitive discovery"
 
 # Seed
 seed: 42
 
 # Grid Search
 # 実行: python train.py pretrain
-# 3つの身体部位で並列実験
+# 3つのウィンドウサイズで並列実験（プリミティブ発見のため）
 grid_search:
   sensor_data:
-    dataset_location_pairs:
-      # 実験1: 手・腕 + NHANES（19ペア）
-      - [
-          ["dsads", "LeftArm"], ["dsads", "RightArm"],
-          ["forthtrace", "LeftWrist"], ["forthtrace", "RightWrist"],
-          ["lara", "LeftArm"], ["lara", "RightArm"],
-          ["mex", "Wrist"],
-          ["mhealth", "RightWrist"],
-          ["paal", "Wrist"],
-          ["pamap2", "hand"],
-          ["realdisp", "LeftLowerArm"], ["realdisp", "LeftUpperArm"],
-          ["realdisp", "RightLowerArm"], ["realdisp", "RightUpperArm"],
-          ["selfback", "Wrist"],
-          ["nhanes", "PAX"]
-        ]
-      # 実験2: 胴体・腰 + NHANES（9ペア）
-      - [
-          ["dsads", "Torso"],
-          ["forthtrace", "Torso"],
-          ["har70plus", "LowerBack"],
-          ["harth", "LowerBack"],
-          ["lara", "Neck"],
-          ["mhealth", "Chest"],
-          ["pamap2", "chest"],
-          ["realdisp", "Back"],
-          ["uschad", "Hip"],
-          ["nhanes", "PAX"]
-        ]
-      # 実験3: 足 + NHANES（14ペア）
-      - [
-          ["dsads", "LeftLeg"], ["dsads", "RightLeg"],
-          ["forthtrace", "LeftAnkle"], ["forthtrace", "RightThigh"],
-          ["har70plus", "RightThigh"],
-          ["harth", "RightThigh"],
-          ["lara", "LeftLeg"], ["lara", "RightLeg"],
-          ["mex", "Thigh"],
-          ["mhealth", "LeftAnkle"],
-          ["pamap2", "ankle"],
-          ["realdisp", "LeftCalf"], ["realdisp", "LeftThigh"],
-          ["realdisp", "RightCalf"], ["realdisp", "RightThigh"],
-          ["selfback", "Thigh"],
-          ["nhanes", "PAX"]
-        ]
+    # ウィンドウサイズの比較実験（プリミティブ粒度の探索）
+    window_size:
+      - 60   # 2.0秒 @ 30Hz（完全プリミティブ）
+      - 30   # 1.0秒 @ 30Hz（短縮プリミティブ）
+      - 15   # 0.5秒 @ 30Hz（アトミックプリミティブ）
 
   model:
     pretrained_path:

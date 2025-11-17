@@ -6,32 +6,27 @@ HARFoundationプロジェクトの分析スクリプト集です。
 
 ```
 analysis/
-├── common/                    # ★共通ユーティリティモジュール
+├── main.py                    # ★統一インターフェース（全てここから実行）
+│
+├── common/                    # 共通ユーティリティモジュール
 │   ├── __init__.py
 │   ├── model_utils.py         # モデル読み込み・特徴抽出
 │   ├── data_utils.py          # データ読み込み・処理
 │   ├── viz_utils.py           # 可視化ユーティリティ
 │   └── README.md              # 詳細な使用方法
 │
+├── scripts/                   # 個別スクリプト（main.pyから呼び出される）
+│   ├── visualize_embeddings.py
+│   ├── report_f1_comparison.py
+│   └── visualize_finetune_comparison.py
+│
 ├── embedding_explorer/        # インタラクティブ埋め込み可視化
-│   ├── extract_features.py   # 特徴量抽出
-│   ├── extract_all_features.py  # 全ウィンドウサイズの特徴抽出
-│   ├── server.py              # 可視化サーバー
-│   ├── templates/             # HTMLテンプレート
-│   └── data/                  # 抽出済み特徴量（.gitignore対象）
+│   ├── extract_features.py
+│   ├── server.py              # Webサーバー（個別起動）
+│   └── ...
 │
-├── visualize_embeddings.py   # ★埋め込み可視化（メイン）
-├── visualize_finetune_comparison.py  # ファインチューニング比較
-├── report_f1_comparison.py   # F1スコア比較レポート
-│
-├── .archive/                  # 使用頻度の低いスクリプト（.gitignore対象）
-│   ├── README.md              # アーカイブの説明
-│   ├── data_quality.py        # データ品質チェック
-│   ├── dataset_distribution.py  # データセット分布分析
-│   ├── feature_analysis.py    # 特徴量分析
-│   ├── model_performance.py   # モデル性能分析
-│   ├── utils.py               # 旧ユーティリティ
-│   └── analyze.py             # 統合分析インターフェース
+├── .archive/                  # アーカイブ（使用頻度低）
+│   └── ...
 │
 └── figures/                   # 生成された図（.gitignore対象）
 ```

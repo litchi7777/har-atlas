@@ -206,8 +206,8 @@ def cmd_visualize(args):
     print("埋め込み可視化を実行します")
     print("="*80)
 
-    # visualize_embeddings.pyのmain関数を呼び出す
-    import visualize_embeddings
+    # scripts/visualize_embeddings.pyのmain関数を呼び出す
+    from scripts import visualize_embeddings
 
     # argsをsys.argvに変換してスクリプトを実行
     sys.argv = ['visualize_embeddings.py']
@@ -276,10 +276,10 @@ def cmd_report(args):
     print("F1スコア比較レポートを生成します")
     print("="*80)
 
-    # report_f1_comparison.pyを実行
+    # scripts/report_f1_comparison.pyを実行
     import subprocess
     result = subprocess.run(
-        ['python', 'analysis/report_f1_comparison.py'],
+        ['python', 'analysis/scripts/report_f1_comparison.py'],
         cwd=project_root
     )
 
@@ -296,7 +296,7 @@ def cmd_compare(args):
     print("ファインチューニング比較を実行します")
     print("="*80)
 
-    import visualize_finetune_comparison
+    from scripts import visualize_finetune_comparison
 
     sys.argv = ['visualize_finetune_comparison.py']
     sys.argv.append('--runs')

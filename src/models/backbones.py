@@ -685,9 +685,13 @@ class IntegratedSSLModel(nn.Module):
             # マスク再構成タスク（masking_channel, masking_time, masking_time_channel等）
             # デコーダー: 特徴マップから元の時系列を再構成
             return self._create_reconstruction_head()
+        elif task.startswith("invariant_"):
+            # Invariance学習タスク（invariant_orientation等）
+            # Contrastive learningのためのプロジェクションヘッド
+            return self._create_invariance_head(task)
         else:
             raise ValueError(
-                f"Unknown task type: {task}. Use prefix like 'binary_', 'contrastive_', or 'masking_'"
+                f"Unknown task type: {task}. Use prefix like 'binary_', 'contrastive_', 'masking_', or 'invariant_'"
             )
 
     def _create_reconstruction_head(self) -> nn.Module:
@@ -703,6 +707,27 @@ class IntegratedSSLModel(nn.Module):
             # 2. さらに拡張
             nn.Linear(self.hidden_dim * 4, self.n_channels * self.sequence_length),
             # 3. 出力はreshapeで (batch, n_channels, sequence_length) にする
+        )
+
+    def _create_invariance_head(self, task: str) -> nn.Module:
+        """
+        Invariance学習用のプロジェクションヘッドを作成
+
+        Args:
+            task: タスク名（invariant_orientation, invariant_scale等）
+
+        Returns:
+            プロジェクションヘッド（特徴を低次元埋め込み空間に写像）
+
+        Note:
+            SimCLRのプロジェクションヘッドと同じ構造
+            出力はL2正規化前提（loss側で正規化される）
+        """
+        return nn.Sequential(
+            nn.Linear(self.input_dim, self.hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(self.hidden_dim, 128),  # 128次元埋め込み
         )
 
     def forward(self, x: torch.Tensor, task: str) -> torch.Tensor:

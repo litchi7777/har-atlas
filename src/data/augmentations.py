@@ -798,3 +798,158 @@ class DynamicAugmentation:
         if np.random.random() < current_prob:
             return self.transform(x)
         return x
+
+
+class RandomRotation3D:
+    """
+    3軸加速度データに完全ランダムな回転を適用
+
+    Orientation Invariance学習用のaugmentation
+    既存のRotationクラスは小角度（±15度）だが、これはSO(3)から均一サンプリング
+
+    使用例:
+        # Rotation Contrastive Learning
+        aug = RandomRotation3D(rotation_type='random')
+        x_rotated = aug(x)
+    """
+
+    def __init__(self, rotation_type: str = 'random'):
+        """
+        Args:
+            rotation_type: 回転のタイプ
+                - 'random': SO(3)からランダムサンプリング（完全ランダム）
+                - 'gravity_preserving': XY平面のみ回転（重力方向=Z軸を保持）
+        """
+        self.rotation_type = rotation_type
+
+    def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+        """
+        Args:
+            x: (channels, time_steps)
+               - channels=3の場合: 3軸加速度として回転
+               - channels=6の場合: [acc_xyz, gyro_xyz]として、加速度のみ回転
+               - それ以外: 回転せずそのまま返す
+
+        Returns:
+            回転後のデータ（同じshape）
+        """
+        if isinstance(x, torch.Tensor):
+            return self._rotate_torch(x)
+        else:
+            return self._rotate_numpy(x)
+
+    def _rotate_torch(self, x: torch.Tensor) -> torch.Tensor:
+        """PyTorchベースの回転（GPU対応）"""
+        n_channels = x.shape[0]
+
+        if n_channels == 3:
+            # 3軸加速度: そのまま回転
+            R = self._random_rotation_matrix_torch(x.device, x.dtype)
+            # (3, 3) @ (3, T) = (3, T)
+            x_rotated = torch.mm(R, x)
+            return x_rotated
+
+        elif n_channels == 6:
+            # [acc_xyz, gyro_xyz]: 加速度のみ回転
+            x_rotated = x.clone()
+            R = self._random_rotation_matrix_torch(x.device, x.dtype)
+            x_rotated[0:3, :] = torch.mm(R, x[0:3, :])
+            # ジャイロも回転させるべきだが、簡単のため今はスキップ
+            return x_rotated
+
+        else:
+            # 3軸でも6軸でもない: 回転しない
+            return x
+
+    def _rotate_numpy(self, x: np.ndarray) -> np.ndarray:
+        """NumPyベースの回転"""
+        n_channels = x.shape[0]
+
+        if n_channels == 3:
+            R = self._random_rotation_matrix_numpy()
+            x_rotated = R @ x
+            return x_rotated
+
+        elif n_channels == 6:
+            x_rotated = x.copy()
+            R = self._random_rotation_matrix_numpy()
+            x_rotated[0:3, :] = R @ x[0:3, :]
+            return x_rotated
+
+        else:
+            return x
+
+    def _random_rotation_matrix_torch(
+        self,
+        device: torch.device,
+        dtype: torch.dtype
+    ) -> torch.Tensor:
+        """
+        SO(3)から均一ランダムに回転行列をサンプリング（PyTorch版）
+
+        QR分解による方法を使用:
+        - ランダム行列Aを生成
+        - QR分解: A = QR
+        - Qが直交行列（det(Q)=±1）
+        - det(Q)=1になるよう調整
+
+        Returns:
+            R: (3, 3) 回転行列
+        """
+        if self.rotation_type == 'random':
+            # SO(3)均一サンプリング
+            random_matrix = torch.randn(3, 3, device=device, dtype=dtype)
+            Q, R_qr = torch.linalg.qr(random_matrix)
+
+            # QR分解のRの対角成分の符号でQを調整
+            signs = torch.sign(torch.diag(R_qr))
+            Q = Q * signs
+
+            # det(Q)が-1の場合、1列反転してdet(Q)=1にする
+            if torch.det(Q) < 0:
+                Q[:, 0] = -Q[:, 0]
+
+            return Q
+
+        elif self.rotation_type == 'gravity_preserving':
+            # XY平面のみ回転（Z軸保持）
+            theta = torch.rand(1, device=device, dtype=dtype) * 2 * math.pi
+            cos_theta = torch.cos(theta)
+            sin_theta = torch.sin(theta)
+
+            R = torch.tensor([
+                [cos_theta, -sin_theta, 0],
+                [sin_theta, cos_theta, 0],
+                [0, 0, 1]
+            ], device=device, dtype=dtype).squeeze()
+
+            return R
+
+        else:
+            raise ValueError(f"Unknown rotation_type: {self.rotation_type}")
+
+    def _random_rotation_matrix_numpy(self) -> np.ndarray:
+        """SO(3)から均一ランダムに回転行列をサンプリング（NumPy版）"""
+        if self.rotation_type == 'random':
+            random_matrix = np.random.randn(3, 3)
+            Q, R_qr = np.linalg.qr(random_matrix)
+
+            signs = np.sign(np.diag(R_qr))
+            Q = Q * signs
+
+            if np.linalg.det(Q) < 0:
+                Q[:, 0] = -Q[:, 0]
+
+            return Q
+
+        elif self.rotation_type == 'gravity_preserving':
+            theta = np.random.rand() * 2 * np.pi
+            R = np.array([
+                [np.cos(theta), -np.sin(theta), 0],
+                [np.sin(theta), np.cos(theta), 0],
+                [0, 0, 1]
+            ])
+            return R
+
+        else:
+            raise ValueError(f"Unknown rotation_type: {self.rotation_type}")

@@ -206,6 +206,7 @@ class IntegratedSSLLoss(nn.Module):
     - binary_*: 変換予測タスク（CrossEntropy損失）
     - masking_*: マスク再構成タスク（MSE損失）
     - contrastive_*: 対照学習タスク（NT-Xent損失）
+    - invariant_*: 不変性学習タスク（Rotation Contrastive損失等）
     """
 
     def __init__(self, ssl_tasks: List[str], task_weights: Optional[Dict[str, float]] = None):
@@ -228,6 +229,7 @@ class IntegratedSSLLoss(nn.Module):
         self.ce_criterion = nn.CrossEntropyLoss()
         self.mse_criterion = nn.MSELoss()
         self.ntxent_criterion = NTXentLoss(temperature=0.5)
+        self.invariant_orientation_criterion = InvariantOrientationLoss(temperature=0.07)
 
     def _get_loss_fn(self, task: str):
         """タスクタイプに応じた損失関数を返す（プレフィックスで判定）"""
@@ -237,9 +239,11 @@ class IntegratedSSLLoss(nn.Module):
             return self.mse_criterion  # MSE（再構成）
         elif task.startswith("contrastive_"):
             return self.ntxent_criterion  # NT-Xent（対照学習）
+        elif task.startswith("invariant_"):
+            return self.invariant_orientation_criterion  # Invariance学習
         else:
             raise ValueError(
-                f"Unknown task type: {task}. Use prefix like 'binary_', 'masking_', or 'contrastive_'"
+                f"Unknown task type: {task}. Use prefix like 'binary_', 'masking_', 'contrastive_', or 'invariant_'"
             )
 
     def forward(
@@ -277,6 +281,11 @@ class IntegratedSSLLoss(nn.Module):
                 # 対照学習: NT-Xent
                 # labelsには2つのビューが格納されている想定
                 # pred は view1の埋め込み、label は view2の埋め込み
+                loss = loss_fn(pred, label)
+            elif task.startswith("invariant_"):
+                # Invariance学習: Rotation Contrastive
+                # pred: 元データの埋め込み (z1)
+                # label: 回転データの埋め込み (z2)
                 loss = loss_fn(pred, label)
             else:
                 raise ValueError(f"Unknown task type: {task}")
@@ -325,3 +334,77 @@ def get_ssl_loss(method: str, **kwargs) -> nn.Module:
             f"Unsupported SSL method: {method}. "
             f"Supported methods: simclr, moco, simsiam, barlow_twins"
         )
+
+
+class InvariantOrientationLoss(nn.Module):
+    """
+    Orientation Invariance学習のためのContrastive Loss
+
+    同じデータ × 異なる回転 → Positive pair（近づける）
+    異なるデータ → Negative pair（遠ざける）
+
+    内部的にはNTXentLoss（InfoNCE）と同じ仕組みを使用
+
+    使用例:
+        loss_fn = InvariantOrientationLoss(temperature=0.07)
+        z1 = model(x_original)  # [B, D]
+        z2 = model(x_rotated)   # [B, D]
+        loss = loss_fn(z1, z2)
+    """
+
+    def __init__(self, temperature: float = 0.07):
+        """
+        Args:
+            temperature: スケーリング温度
+                - 小さい値（0.05-0.1）: hard negative miningを強化
+                - 大きい値（0.5-1.0）: soft learning
+                - デフォルト0.07はSimCLRの推奨値
+        """
+        super().__init__()
+        self.temperature = temperature
+        self.criterion = nn.CrossEntropyLoss()
+
+    def forward(self, z1: torch.Tensor, z2: torch.Tensor) -> torch.Tensor:
+        """
+        Contrastive lossを計算
+
+        Args:
+            z1: [batch_size, embed_dim] 元データの埋め込み
+            z2: [batch_size, embed_dim] 回転データの埋め込み
+
+        Returns:
+            loss: スカラー損失値
+
+        Note:
+            z1, z2は内部でL2正規化される
+        """
+        batch_size = z1.shape[0]
+        device = z1.device
+
+        # L2正規化（コサイン類似度になる）
+        z1 = F.normalize(z1, dim=1)
+        z2 = F.normalize(z2, dim=1)
+
+        # 連結: [2*batch_size, embed_dim]
+        z = torch.cat([z1, z2], dim=0)
+
+        # 類似度行列: [2*batch_size, 2*batch_size]
+        similarity_matrix = torch.matmul(z, z.T) / self.temperature
+
+        # 自分自身を除外するマスク
+        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=device)
+        # FP16対応: -1e9はFloat16の範囲を超えるため、float("-inf")を使用
+        similarity_matrix = similarity_matrix.masked_fill(mask, float("-inf"))
+
+        # Positive pairのラベル
+        # i番目のz1のpositive pairはi+batch_size番目のz2
+        # i番目のz2のpositive pairはi番目のz1
+        labels = torch.cat([
+            torch.arange(batch_size) + batch_size,  # z1 → z2
+            torch.arange(batch_size)                # z2 → z1
+        ]).to(device)
+
+        # InfoNCE loss (CrossEntropyとして実装)
+        loss = self.criterion(similarity_matrix, labels)
+
+        return loss

@@ -555,6 +555,37 @@ def apply_augmentations_batch(
         # ラベル: 元データ（再構成ターゲット）
         labels_dict[task] = original_x
 
+    # Invarianceタスク - Rotation Contrastive Learning等
+    invariant_tasks = [t for t in ssl_tasks if t.startswith("invariant_")]
+    for task in invariant_tasks:
+        invariant_type = task.replace("invariant_", "")
+
+        # 元データ（view1）
+        task_inputs_dict[task] = x_base.clone()
+
+        # Rotation augmentation（view2）
+        if invariant_type == "orientation":
+            # RandomRotation3Dを適用
+            if "rotation_invariant" in transforms:
+                rotation_transform = transforms["rotation_invariant"]
+            else:
+                # transformsになければその場で作成
+                from src.data.augmentations import RandomRotation3D
+                rotation_transform = RandomRotation3D(rotation_type='random')
+
+            # 各サンプルに回転を適用
+            x_rotated_batch = []
+            for sample in x_base:
+                x_rotated = rotation_transform(sample)
+                x_rotated_batch.append(x_rotated)
+            x_rotated = torch.stack(x_rotated_batch).to(device)
+
+            # ラベル: 回転後のデータ（contrastive lossではview2として使用）
+            labels_dict[task] = x_rotated
+        else:
+            # 他のinvarianceタイプ（将来の拡張用）
+            labels_dict[task] = x_base.clone()
+
     # デバイスに移動（Binary変換は既にGPU上、Masking変換はCPUから転送）
     task_inputs_dict = {k: v.to(device) if v.device != device else v for k, v in task_inputs_dict.items()}
     labels_dict = {k: v.to(device) if v.device != device else v for k, v in labels_dict.items()}
@@ -598,13 +629,27 @@ def process_multitask_batch(
 
     # 各タスクについて、専用の拡張データで順伝播
     predictions = {}
+    labels_for_loss = {}
     for task in ssl_tasks:
         x_task = task_inputs_dict[task]
-        pred = model(x_task, task)
-        predictions[task] = pred
+
+        if task.startswith("invariant_"):
+            # Invarianceタスク: 2つのビューを両方エンコード
+            z1 = model(x_task, task)  # 元データの埋め込み
+            x_rotated = labels_dict[task]  # 回転後のデータ
+            z2 = model(x_rotated, task)  # 回転データの埋め込み
+
+            # predictions: z1, labels_for_loss: z2（埋め込み）として損失関数に渡す
+            predictions[task] = z1
+            labels_for_loss[task] = z2
+        else:
+            # 他のタスク: 通常通り
+            pred = model(x_task, task)
+            predictions[task] = pred
+            labels_for_loss[task] = labels_dict[task]
 
     # 損失計算
-    total_loss, task_losses = criterion(predictions, labels_dict)
+    total_loss, task_losses = criterion(predictions, labels_for_loss)
 
     # バッチサイズ計算用に最初のタスクの入力を返す
     x_base = task_inputs_dict[ssl_tasks[0]]

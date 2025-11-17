@@ -51,7 +51,7 @@ sensor_data:
   # バッチローダー設定
   batch_loader:
     exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
-    sample_threshold: 1000  # 最小サンプル数（1ファイルあたり）
+    sample_threshold: 2000  # 最小サンプル数（1ファイルあたり）
     batch_size: 4  # 1バッチに含める被験者（ファイル）数
     train_num_samples: 1000  # エポックあたりのサンプル数
     val_num_samples: 100
@@ -71,8 +71,9 @@ multitask:
   # - binary_*: 変換予測タスク（binary_permute, binary_reverse, binary_timewarp）
   # - masking_*: マスク再構成タスク（masking_channel, masking_time, masking_time_channel）
   # - contrastive_*: 対照学習タスク（将来拡張用）
-  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp"]
-  task_weights: [1.0, 1.0, 1.0]
+  # - invariant_*: 不変性学習タスク（invariant_orientation: 向き不変性）
+  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp", "invariant_orientation"]
+  task_weights: [1.0, 1.0, 1.0, 0.1]  # invariant_orientationの重みを0.1に設定
   apply_prob: 0.5  # binary_*タスクの適用確率
   mask_ratio: 0.15  # masking_*タスクのマスク比率
 
@@ -136,7 +137,10 @@ grid_search:
       - null
   multitask:
     ssl_tasks:
-      - ["binary_permute", "binary_reverse", "binary_timewarp"]
+      # Baseline: 既存3タスク（向き不変性なし）
+      #- ["binary_permute", "binary_reverse", "binary_timewarp"]
+      # Proposed: 既存3タスク + 向き不変性
+      - ["binary_permute", "binary_reverse", "binary_timewarp", "invariant_orientation"]
 
 
 settings:

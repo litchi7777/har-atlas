@@ -164,6 +164,7 @@ analysis/figures/
 # Analysis data (embeddings, features)
 analysis/embedding_explorer/data/*.npz
 analysis/embedding_explorer/data/*.npy
+analysis/embedding_explorer/data/*.json
 
 # Analysis archive (low-usage scripts)
 analysis/.archive/

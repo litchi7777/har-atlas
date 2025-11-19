@@ -1,4 +1,5 @@
 # Fine-tuning Configuration
+# Rotation Invariance比較実験: Baseline vs Proposed (2.0s window)
 
 # Dataset
 dataset_type: "sensor"
@@ -6,6 +7,15 @@ dataset_type: "sensor"
 sensor_data:
   # データセットの基本設定
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
+
+  # ウィンドウサイズ設定（2.0秒固定 - pretrainモデルに合わせる）
+  window_size: 60  # 2.0秒 @ 30Hz
+  original_window_size: 150  # 元データの5.0秒 @ 30Hz
+
+  # ウィンドウクリップ設定（5秒→2.0秒へ）
+  window_clip:
+    enabled: true
+    strategy: "random"  # random, center, start, end
 
   # データセットとセンサー位置のペア（grid_searchで上書き）
   # 各ペアは [データセット名, センサー位置] の形式
@@ -76,8 +86,8 @@ wandb:
   job_type: "finetune"
   entity: null
   name: null
-  tags: []
-  notes: null
+  tags: ["rotation_comparison", "window_2.0s", "baseline_vs_proposed"]
+  notes: "Rotation Invariance comparison: Baseline (3 SSL tasks) vs Proposed (+invariant_orientation) on 2.0s window"
 
 # Early Stopping
 early_stopping:
@@ -88,7 +98,7 @@ early_stopping:
 seed: 42
 
 # Grid Search（オプション）
-# 3つの事前学習モデル × 複数データセット・部位 × 3ランダムシードで検証
+# Rotation Invariance比較実験: Baseline vs Proposed × 複数データセット・部位 × 3ランダムシード
 grid_search:
   seed:
     - 42
@@ -96,24 +106,28 @@ grid_search:
     - 456
   sensor_data:
     dataset_location_pairs:
-      # 手・腕部位
+      # 手・腕部位（Rotation Invarianceの効果が顕著な部位）
       - [["pamap2", "hand"]]           # PAMAP2: 手 (12クラス)
       - [["mhealth", "RightWrist"]]    # MHEALTH: 右手首 (12クラス)
       - [["dsads", "RightArm"]]        # DSADS: 右腕 (19クラス)
       - [["forthtrace", "RightWrist"]] # FORTHTRACE: 右手首 (16クラス)
-      # 胴体・腰部位
+      # 胴体・腰部位（参考比較用）
       - [["dsads", "Torso"]]           # DSADS: 胴体 (19クラス)
       - [["mhealth", "Chest"]]         # MHEALTH: 胸 (12クラス)
       - [["har70plus", "LowerBack"]]   # HAR70PLUS: 腰 (7クラス)
       - [["harth", "LowerBack"]]       # HARTH: 腰 (12クラス)
-      # 足部位
+      # 足部位（参考比較用）
       - [["dsads", "RightLeg"]]        # DSADS: 右足 (19クラス)
       - [["mhealth", "LeftAnkle"]]     # MHEALTH: 左足首 (12クラス)
       - [["forthtrace", "LeftAnkle"]]  # FORTHTRACE: 左足首 (16クラス)
   model:
     pretrained_path:
-      # Supervised Learning (from scratch) - ベースライン
-      - null  # 事前学習なし（ランダム初期化）のみ実行
+      # Baseline: Rotation Invarianceなし（既存3タスクのみ）
+      - "experiments/pretrain/run_20251112_192545/exp_0/models/best_model.pth"
+      # Proposed: Rotation Invarianceあり（既存3タスク + invariant_orientation）
+      - "experiments/pretrain/run_20251117_074851/exp_0/models/best_model.pth"
+      # Reference: 事前学習なし（ランダム初期化）
+      - null
 
 settings:
   stop_on_error: false

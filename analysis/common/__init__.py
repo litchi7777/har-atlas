@@ -20,6 +20,8 @@ from .viz_utils import (
     reduce_dimensions,
     setup_plotting_style,
     get_color_palette,
+    get_body_part_colors,
+    get_dataset_colors,
 )
 
 __all__ = [
@@ -37,4 +39,6 @@ __all__ = [
     'reduce_dimensions',
     'setup_plotting_style',
     'get_color_palette',
+    'get_body_part_colors',
+    'get_dataset_colors',
 ]

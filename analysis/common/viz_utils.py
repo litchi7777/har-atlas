@@ -62,7 +62,7 @@ def reduce_dimensions(
         reducer = TSNE(
             n_components=n_components,
             perplexity=kwargs.get('perplexity', 30),
-            n_iter=kwargs.get('n_iter', 1000),
+            max_iter=kwargs.get('max_iter', 1000),
             random_state=kwargs.get('random_state', 42)
         )
         embedded = reducer.fit_transform(features)

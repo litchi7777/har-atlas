@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Embedding Explorer</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -155,12 +155,12 @@
 
         .plot-container {
             padding: 30px;
-            min-height: 700px;
+            min-height: 900px;
         }
 
         #plot {
             width: 100%;
-            height: 700px;
+            height: 900px;
         }
 
         .loading {
@@ -207,31 +207,31 @@
         </div>
 
         <div class="controls">
-            <!-- Basic Settings -->
+            <!-- Settings Section -->
             <div class="control-section">
-                <h3>⚙️ Basic Settings</h3>
+                <h3>⚙️ Settings</h3>
                 <div class="control-group">
-                    <label>Window Size:</label>
-                    <select id="windowSize">
-                        <option value="5.0s">5.0s (150 samples)</option>
-                        <option value="2.0s">2.0s (60 samples)</option>
-                        <option value="1.0s">1.0s (30 samples)</option>
-                        <option value="0.5s">0.5s (15 samples)</option>
+                    <label>Model:</label>
+                    <select id="modelSelect">
+                        <!-- Dynamically populated -->
                     </select>
 
-                    <label>Reduction Method:</label>
-                    <select id="method">
-                        <option value="umap">UMAP</option>
-                        <option value="tsne">t-SNE</option>
-                        <option value="pca">PCA</option>
-                    </select>
+                    <button id="applyModelBtn" style="padding: 10px 20px;">Apply Model</button>
 
-                    <label>Color By:</label>
-                    <select id="colorBy">
-                        <option value="dataset">Dataset</option>
-                        <option value="activity">Activity</option>
-                        <option value="location">Location</option>
-                    </select>
+                    <label style="display: flex; align-items: center; cursor: pointer; user-select: none; margin-left: 20px;">
+                        <input type="checkbox" id="plotlyToggle" checked style="margin-right: 8px; cursor: pointer;">
+                        Show Plotly Controls
+                    </label>
+                </div>
+            </div>
+
+            <!-- Dataset Filter -->
+            <div class="control-section">
+                <h3>📊 Dataset Filter</h3>
+                <button class="select-all-btn" onclick="toggleAll('datasets', true)">Select All</button>
+                <button class="select-all-btn" onclick="toggleAll('datasets', false)" style="background: #dc3545;">Deselect All</button>
+                <div id="datasetCheckboxes" class="checkbox-group" style="max-height: 200px;">
+                    <!-- Dynamically populated -->
                 </div>
             </div>
 
@@ -268,46 +268,126 @@
         <div class="plot-container">
             <div id="plot"></div>
         </div>
+
+        <!-- Sensor Waveform Display -->
+        <div class="plot-container" style="margin-top: 20px;">
+            <h3 style="padding: 10px 20px; margin: 0; background: #f8f9fa; border-bottom: 1px solid #dee2e6;">
+                Raw Sensor Data (Click a point to view)
+            </h3>
+            <div id="sensorPlot" style="min-height: 300px; display: flex; align-items: center; justify-content: center; color: #6c757d;">
+                Click on a data point in the scatter plot above to view raw sensor data
+            </div>
+        </div>
     </div>
 
     <script>
-        let currentWindowSize = '5.0s';
+        let currentModel = '5.0s';  // Default model
+        let allDatasets = [];
         let allActivities = [];
         let allLocations = [];
+        let currentPlotData = null;
+        let activitiesByDataset = {};
 
-        // Load metadata on window size change
-        document.getElementById('windowSize').addEventListener('change', function() {
-            currentWindowSize = this.value;
-            loadMetadata(currentWindowSize);
+        // Load available models on page load
+        fetch('/api/models')
+            .then(response => response.json())
+            .then(data => {
+                const modelSelect = document.getElementById('modelSelect');
+                modelSelect.innerHTML = '';
+
+                data.models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    modelSelect.appendChild(option);
+                });
+
+                // Set default model
+                if (data.models.length > 0) {
+                    currentModel = data.models[0];
+                    modelSelect.value = currentModel;
+
+                    // Load metadata for default model
+                    loadMetadata(currentModel);
+                }
+            })
+            .catch(error => {
+                console.error('Failed to load models:', error);
+                showError('Failed to load models');
+            });
+
+        // Apply model button
+        document.getElementById('applyModelBtn').addEventListener('click', function() {
+            const selectedModel = document.getElementById('modelSelect').value;
+            currentModel = selectedModel;
+            console.log('Applying model:', currentModel);
+
+            // Reload metadata and visualize
+            loadMetadata(currentModel);
         });
 
-        // Auto-visualize on settings change
-        document.getElementById('method').addEventListener('change', visualize);
-        document.getElementById('colorBy').addEventListener('change', visualize);
+        // Plotly controls toggle
+        document.getElementById('plotlyToggle').addEventListener('change', function() {
+            const plot = document.getElementById('plot');
+            const config = {
+                displayModeBar: this.checked,
+                responsive: true
+            };
 
-        // Load initial metadata and visualize
-        loadMetadata(currentWindowSize);
+            // Re-render plot with new config
+            if (currentPlotData) {
+                Plotly.newPlot('plot', currentPlotData.data, currentPlotData.layout, config);
 
-        function loadMetadata(windowSize) {
-            fetch(`/api/metadata/${windowSize}`)
-                .then(response => response.json())
+                // Re-add click event listener
+                plot.on('plotly_click', function(data) {
+                    handlePointClick(data);
+                });
+
+                // Re-apply highlighting
+                updateHighlighting();
+            }
+        });
+
+        function loadMetadata(modelName) {
+            console.log('[loadMetadata] Loading metadata for model:', modelName);
+            fetch(`/api/metadata/${modelName}`)
+                .then(response => {
+                    console.log('[loadMetadata] Response status:', response.status);
+                    return response.json();
+                })
                 .then(data => {
+                    console.log('[loadMetadata] Response data:', data);
+
                     if (data.error) {
-                        showError(data.error);
+                        showError('Metadata error: ' + data.error);
                         return;
                     }
 
-                    // Store all activities and locations for later use
+                    // Validate data
+                    if (!data.activities_by_dataset || !data.locations) {
+                        showError('Invalid metadata structure');
+                        console.error('[loadMetadata] Invalid data structure:', data);
+                        return;
+                    }
+
+                    // Store metadata
+                    activitiesByDataset = data.activities_by_dataset;
+                    allDatasets = Object.keys(activitiesByDataset).sort();
                     allActivities = [];
-                    Object.values(data.activities_by_dataset).forEach(acts => {
+                    Object.values(activitiesByDataset).forEach(acts => {
                         allActivities = allActivities.concat(acts);
                     });
-                    allActivities = [...new Set(allActivities)]; // Remove duplicates
-                    allLocations = data.locations;
+                    allActivities = [...new Set(allActivities)].sort();
+                    allLocations = data.locations.sort();
+
+                    console.log('[loadMetadata] Datasets:', allDatasets.length);
+                    console.log('[loadMetadata] Activities:', allActivities.length);
+                    console.log('[loadMetadata] Locations:', allLocations.length);
 
                     // Populate checkboxes
-                    populateActivityCheckboxesByDataset('activityCheckboxes', data.activities_by_dataset);
-                    populateCheckboxes('locationCheckboxes', data.locations, 'locations');
+                    populateCheckboxes('datasetCheckboxes', allDatasets, 'datasets');
+                    populateActivityCheckboxes('activityCheckboxes', activitiesByDataset);
+                    populateCheckboxes('locationCheckboxes', allLocations, 'locations');
 
                     // Add event listeners to checkboxes for auto-update
                     addCheckboxListeners();
@@ -316,14 +396,16 @@
                     setupActivitySearch();
 
                     // Show info
+                    const totalSamples = data.total_samples || 0;
                     document.getElementById('info').textContent =
-                        `Total samples available: ${data.total_samples.toLocaleString()}`;
+                        `Total samples available: ${totalSamples.toLocaleString()}`;
                     document.getElementById('info').style.display = 'block';
 
                     // Auto-visualize after loading metadata
                     visualize();
                 })
                 .catch(error => {
+                    console.error('[loadMetadata] Error:', error);
                     showError('Failed to load metadata: ' + error);
                 });
         }
@@ -352,76 +434,31 @@
             });
         }
 
-        function populateActivityCheckboxesByDataset(containerId, activitiesByDataset) {
+        function populateActivityCheckboxes(containerId, activitiesByDataset) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
 
-            // データセットごとにセクションを作成
+            // Create activities grouped by dataset
             Object.keys(activitiesByDataset).sort().forEach(dataset => {
-                // データセット名のヘッダー（チェックボックス付き）
-                const header = document.createElement('div');
-                header.className = 'dataset-header';
-                header.setAttribute('data-dataset', dataset);
-                header.style.gridColumn = '1 / -1';
-                header.style.fontWeight = 'bold';
-                header.style.marginTop = '10px';
-                header.style.marginBottom = '5px';
-                header.style.paddingLeft = '5px';
-                header.style.borderBottom = '1px solid #ddd';
-                header.style.color = '#667eea';
-                header.style.display = 'flex';
-                header.style.alignItems = 'center';
-
-                // データセット全体のチェックボックス
-                const datasetCheckbox = document.createElement('input');
-                datasetCheckbox.type = 'checkbox';
-                datasetCheckbox.id = `dataset_${dataset}`;
-                datasetCheckbox.checked = true;
-                datasetCheckbox.style.marginRight = '8px';
-                datasetCheckbox.addEventListener('change', function() {
-                    // このデータセット配下のすべてのアクティビティをトグル
-                    const activities = activitiesByDataset[dataset];
-                    activities.forEach(activity => {
-                        // IDをdataset_activityの形式で検索
-                        const activityCheckbox = document.getElementById(`activities_${dataset}_${activity}`);
-                        if (activityCheckbox) {
-                            activityCheckbox.checked = this.checked;
-                        }
-                    });
-                    updateHighlighting();
-                });
-
-                const datasetLabel = document.createElement('label');
-                datasetLabel.htmlFor = datasetCheckbox.id;
-                datasetLabel.textContent = dataset;
-                datasetLabel.style.cursor = 'pointer';
-                datasetLabel.style.margin = '0';
-
-                header.appendChild(datasetCheckbox);
-                header.appendChild(datasetLabel);
-                container.appendChild(header);
-
-                // アクティビティのチェックボックス
                 const activities = activitiesByDataset[dataset];
+
                 activities.forEach(activity => {
                     const div = document.createElement('div');
-                    div.className = 'checkbox-item activity-item';
-                    div.style.paddingLeft = '15px';
-                    // 検索用のデータ属性を追加
+                    div.className = 'checkbox-item';
                     div.setAttribute('data-dataset', dataset);
                     div.setAttribute('data-activity', activity.toLowerCase());
 
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
-                    // IDをdataset_activityの形式にして一意にする
-                    checkbox.id = `activities_${dataset}_${activity}`;
-                    // valueは実際に送信される値（サーバー側と一致させる）
-                    checkbox.value = activity;
+                    // Use dataset_activity as ID and value to avoid conflicts
+                    const datasetActivity = `${dataset}_${activity}`;
+                    checkbox.id = `activities_${datasetActivity}`;
+                    checkbox.value = datasetActivity;
                     checkbox.checked = true;
 
                     const label = document.createElement('label');
                     label.htmlFor = checkbox.id;
-                    label.textContent = activity;
+                    label.textContent = `${dataset}: ${activity}`;
 
                     div.appendChild(checkbox);
                     div.appendChild(label);
@@ -431,14 +468,12 @@
         }
 
         function addCheckboxListeners() {
-            // Checkboxes only update highlighting, not full re-render
-            const allCheckboxes = document.querySelectorAll('input[type="checkbox"]');
+            // All checkboxes trigger updateHighlighting
+            const allCheckboxes = document.querySelectorAll('input[type="checkbox"]:not(#plotlyToggle)');
             allCheckboxes.forEach(cb => {
                 cb.addEventListener('change', updateHighlighting);
             });
         }
-
-        let currentPlotData = null;
 
         function updateHighlighting() {
             console.log('[updateHighlighting] Called');
@@ -448,58 +483,80 @@
                 return;
             }
 
-            const selectedActivities = getSelectedValues('activities');
+            const selectedDatasets = getSelectedValues('datasets');
+            const selectedDatasetActivities = getSelectedValues('activities');  // Now returns ["dsads_Walking", "mhealth_Standing", ...]
             const selectedLocations = getSelectedValues('locations');
 
-            console.log('[updateHighlighting] Selected activities:', selectedActivities.length);
+            console.log('[updateHighlighting] Selected datasets:', selectedDatasets.length);
+            console.log('[updateHighlighting] Selected dataset_activities:', selectedDatasetActivities.length);
             console.log('[updateHighlighting] Selected locations:', selectedLocations.length);
             console.log('[updateHighlighting] Total traces:', currentPlotData.data.length);
 
-            // Update trace opacity based on selection (grayed out instead of hidden)
-            const opacityArray = currentPlotData.data.map((trace, idx) => {
-                // trace.nameには "dataset/activity/location" が入っている
-                const parts = trace.name.split('/');
-                if (parts.length < 3) {
-                    return 0.7;  // Default opacity
+            // Update trace visibility based on selection
+            // trace.name format: "[dataset_location] activity"
+            const visibilityArray = currentPlotData.data.map((trace, idx) => {
+                const traceName = trace.name || '';
+
+                // Parse trace name: "[dsads_Wrist] Walking" -> dataset="dsads", location="Wrist", activity="Walking"
+                const match = traceName.match(/^\[([^_]+)_([^\]]+)\]\s+(.+)$/);
+                if (!match) {
+                    return true;  // Keep visible if format doesn't match
                 }
 
-                const dataset = parts[0];
-                const activity = parts[1];
-                const location = parts[2];
+                const dataset = match[1];
+                const location = match[2];
+                const activity = match[3];
+                const datasetActivity = `${dataset}_${activity}`;
 
-                const activityMatch = selectedActivities.includes(activity);
-                const locationMatch = selectedLocations.includes(location);
+                const datasetMatch = selectedDatasets.length === 0 || selectedDatasets.includes(dataset);
+                const datasetActivityMatch = selectedDatasetActivities.length === 0 || selectedDatasetActivities.includes(datasetActivity);
+                const locationMatch = selectedLocations.length === 0 || selectedLocations.includes(location);
 
-                // Selected: normal opacity (0.7), Deselected: very faint (0.1)
-                const opacity = (activityMatch && locationMatch) ? 0.7 : 0.1;
+                const isVisible = datasetMatch && datasetActivityMatch && locationMatch;
 
-                if (idx < 3) {
-                    console.log(`[updateHighlighting] Trace ${idx}: ${trace.name} -> opacity=${opacity}`);
+                if (idx < 5) {
+                    console.log(`[updateHighlighting] Trace ${idx}: ${traceName}`);
+                    console.log(`  Parsed: dataset=${dataset}, location=${location}, activity=${activity}, datasetActivity=${datasetActivity}`);
+                    console.log(`  Matches: dataset=${datasetMatch}, datasetActivity=${datasetActivityMatch}, location=${locationMatch}`);
+                    console.log(`  -> visible=${isVisible}`);
                 }
 
-                return opacity;
+                return isVisible;
             });
 
-            console.log('[updateHighlighting] Opacity array sample:', opacityArray.slice(0, 5));
             console.log('[updateHighlighting] Calling Plotly.restyle...');
+            console.log('[updateHighlighting] Visibility array:', visibilityArray.slice(0, 5));
 
-            // Update marker opacity
-            Plotly.restyle('plot', {'marker.opacity': opacityArray});
+            // Update trace visibility (true = visible, 'legendonly' = hidden)
+            // Plotly.restyle expects an array of values for each trace
+            Plotly.restyle('plot',
+                'visible',
+                visibilityArray.map(v => v ? true : 'legendonly')
+            );
 
             console.log('[updateHighlighting] Done');
         }
 
         function toggleAll(groupName, checked) {
-            const checkboxes = document.querySelectorAll(`input[id^="${groupName}_"]`);
-            checkboxes.forEach(cb => cb.checked = checked);
-
-            // アクティビティフィルターの場合、データセットチェックボックスも連動
+            // For activities, only toggle visible items (considering search filter)
             if (groupName === 'activities') {
-                const datasetCheckboxes = document.querySelectorAll('input[id^="dataset_"]');
-                datasetCheckboxes.forEach(cb => cb.checked = checked);
+                const activityItems = document.querySelectorAll('#activityCheckboxes .checkbox-item');
+                activityItems.forEach(item => {
+                    // Only toggle if item is visible (not filtered out by search)
+                    if (item.style.display !== 'none') {
+                        const checkbox = item.querySelector('input[type="checkbox"]');
+                        if (checkbox) {
+                            checkbox.checked = checked;
+                        }
+                    }
+                });
+            } else {
+                // For datasets and locations, toggle all
+                const checkboxes = document.querySelectorAll(`input[id^="${groupName}_"]`);
+                checkboxes.forEach(cb => cb.checked = checked);
             }
 
-            // Update highlighting only
+            // Update highlighting
             updateHighlighting();
         }
 
@@ -509,25 +566,38 @@
         }
 
         function visualize() {
-            const windowSize = document.getElementById('windowSize').value;
-            const method = document.getElementById('method').value;
-            const colorBy = document.getElementById('colorBy').value;
+            const showPlotlyControls = document.getElementById('plotlyToggle').checked;
 
             // Show loading
-            document.getElementById('plot').innerHTML = '<div class="loading">Updating visualization</div>';
+            document.getElementById('plot').innerHTML = '<div class="loading">Loading visualization</div>';
 
-            // Send request with ALL activities and locations to get full dataset
+            // Fixed parameters for visualization
+            const method = 'tsne';
+            const colorBy = 'dataset_activity';
+
+            // 選択されたフィルターを取得
+            const selectedDatasets = getSelectedValues('datasets');
+            const selectedActivities = getSelectedValues('activities');
+            const selectedLocations = getSelectedValues('locations');
+
+            console.log('[visualize] Sending filters:');
+            console.log('  Datasets:', selectedDatasets);
+            console.log('  Activities:', selectedActivities.length, 'items');
+            console.log('  Locations:', selectedLocations);
+
+            // Send request with selected filters
             fetch('/api/visualize', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    window_size: windowSize,
+                    model_name: currentModel,
                     method: method,
                     color_by: colorBy,
-                    selected_activities: allActivities,  // Request ALL data
-                    selected_locations: allLocations     // Request ALL data
+                    selected_datasets: selectedDatasets.length > 0 ? selectedDatasets : null,
+                    selected_activities: selectedActivities.length > 0 ? selectedActivities : null,
+                    selected_locations: selectedLocations.length > 0 ? selectedLocations : null
                 })
             })
             .then(response => response.json())
@@ -537,13 +607,24 @@
                     return;
                 }
 
-                // Store current plot data for fast highlighting updates
+                // Store current plot data
                 currentPlotData = data.graph;
 
-                // Render plot (data.graph is already an object, no need to parse)
-                Plotly.newPlot('plot', data.graph.data, data.graph.layout);
+                // Plotly config
+                const config = {
+                    displayModeBar: showPlotlyControls,
+                    responsive: true
+                };
 
-                // Apply initial highlighting based on current checkbox state
+                // Render plot
+                Plotly.newPlot('plot', data.graph.data, data.graph.layout, config);
+
+                // Add click event listener
+                document.getElementById('plot').on('plotly_click', function(data) {
+                    handlePointClick(data);
+                });
+
+                // Apply initial highlighting
                 updateHighlighting();
 
                 // Show info
@@ -566,36 +647,107 @@
             searchInput.addEventListener('input', function() {
                 const searchTerm = this.value.toLowerCase();
 
-                // すべてのアクティビティアイテムを取得
-                const activityItems = document.querySelectorAll('.activity-item');
-                const datasetHeaders = document.querySelectorAll('.dataset-header');
-
-                // データセットごとに可視アクティビティをカウント
-                const visibleCountByDataset = {};
+                // Filter activity checkboxes
+                const activityItems = document.querySelectorAll('#activityCheckboxes .checkbox-item');
 
                 activityItems.forEach(item => {
                     const activityName = item.getAttribute('data-activity');
                     const dataset = item.getAttribute('data-dataset');
 
-                    // 検索条件に一致するかチェック
-                    if (activityName.includes(searchTerm)) {
-                        item.style.display = '';  // 表示
-                        visibleCountByDataset[dataset] = (visibleCountByDataset[dataset] || 0) + 1;
+                    // Match search term in activity name or dataset
+                    if (activityName.includes(searchTerm) || dataset.toLowerCase().includes(searchTerm)) {
+                        item.style.display = '';
                     } else {
-                        item.style.display = 'none';  // 非表示
-                    }
-                });
-
-                // データセットヘッダーの表示/非表示
-                datasetHeaders.forEach(header => {
-                    const dataset = header.getAttribute('data-dataset');
-                    if (visibleCountByDataset[dataset] > 0) {
-                        header.style.display = '';  // アクティビティが1つでも表示されていれば表示
-                    } else {
-                        header.style.display = 'none';  // すべて非表示なら隠す
+                        item.style.display = 'none';
                     }
                 });
             });
+        }
+
+        // Handle point click to display sensor data
+        function handlePointClick(data) {
+            const point = data.points[0];
+            const hovertext = point.hovertext || point.text || '';
+            const globalIndex = point.customdata;
+
+            // Parse metadata from hovertext
+            const lines = hovertext.split('<br>');
+            let dataset, location, activity;
+
+            lines.forEach(line => {
+                if (line.includes('Dataset:')) dataset = line.split(':')[1].trim();
+                if (line.includes('Location:')) location = line.split(':')[1].trim();
+                if (line.includes('Activity:')) activity = line.split(':')[1].trim();
+            });
+
+            console.log('Clicked point:', { dataset, location, activity, globalIndex });
+
+            // Fetch sensor data from server
+            fetch('/api/sensor_data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    dataset: dataset,
+                    location: location,
+                    activity: activity,
+                    point_index: globalIndex,
+                    model_name: currentModel
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    console.error('Error:', data.error);
+                    return;
+                }
+
+                displaySensorWaveform(data);
+            })
+            .catch(error => {
+                console.error('Failed to fetch sensor data:', error);
+            });
+        }
+
+        // Display sensor waveform
+        function displaySensorWaveform(data) {
+            const sensorData = data.sensor_data;  // shape: (3, window_size)
+            const timeSteps = Array.from({length: sensorData[0].length}, (_, i) => i);
+
+            const traces = [
+                {
+                    x: timeSteps,
+                    y: sensorData[0],
+                    mode: 'lines',
+                    name: 'X-axis',
+                    line: { color: '#e74c3c', width: 2 }
+                },
+                {
+                    x: timeSteps,
+                    y: sensorData[1],
+                    mode: 'lines',
+                    name: 'Y-axis',
+                    line: { color: '#3498db', width: 2 }
+                },
+                {
+                    x: timeSteps,
+                    y: sensorData[2],
+                    mode: 'lines',
+                    name: 'Z-axis',
+                    line: { color: '#2ecc71', width: 2 }
+                }
+            ];
+
+            const layout = {
+                title: `Raw Sensor Data: ${data.dataset} / ${data.location} / ${data.activity}`,
+                xaxis: { title: 'Time Steps' },
+                yaxis: { title: 'Acceleration (G)' },
+                height: 400,
+                hovermode: 'x unified',
+                showlegend: true,
+                legend: { orientation: 'h', y: -0.2 }
+            };
+
+            Plotly.newPlot('sensorPlot', traces, layout);
         }
     </script>
 </body>

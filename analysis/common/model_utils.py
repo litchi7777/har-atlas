@@ -180,6 +180,10 @@ def extract_features(
             # エンコーダーに入力
             batch_features = encoder(batch_tensor)
 
+            # 3次元以上の場合は2次元にflatten
+            if len(batch_features.shape) > 2:
+                batch_features = batch_features.view(batch_features.size(0), -1)
+
             features.append(batch_features.cpu().numpy())
 
     features = np.concatenate(features, axis=0)

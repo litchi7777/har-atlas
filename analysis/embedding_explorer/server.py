@@ -21,7 +21,6 @@ from plotly.subplots import make_subplots
 import plotly
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
-import umap
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent
@@ -88,28 +87,43 @@ def map_location_to_category(location):
 cached_data = {}
 
 
-def load_features(window_size_label='5.0s'):
+def get_available_models():
+    """利用可能なモデル一覧を取得"""
+    data_dir = Path(__file__).parent / "data"
+    models = []
+
+    # metadata_*.json ファイルを探す
+    for metadata_file in data_dir.glob("metadata_*.json"):
+        model_name = metadata_file.stem.replace("metadata_", "")
+        # 旧形式（window_size_label）もサポート
+        models.append(model_name)
+
+    return sorted(models)
+
+
+def load_features(model_name='5.0s'):
     """
     特徴ベクトルとメタデータを読み込む
 
     Args:
-        window_size_label: ウィンドウサイズラベル ('5.0s', '2.0s', '1.0s', '0.5s')
+        model_name: モデル名 or window_size_label ('rotation', '5.0s', '2.0s', etc.)
 
     Returns:
         features: 特徴ベクトル (N, feature_dim)
         metadata: メタデータ辞書
-        umap_embeddings: 事前計算されたUMAP埋め込み (N, 2) or None
+        sensor_data: 生センサーデータ (N, 3, window_size) or None
+        tsne_embeddings: 事前計算されたt-SNE埋め込み (N, 2) or None
     """
     data_dir = Path(__file__).parent / "data"
 
     # キャッシュチェック
-    if window_size_label in cached_data:
-        print(f"Using cached data for {window_size_label}")
-        return cached_data[window_size_label]
+    if model_name in cached_data:
+        print(f"Using cached data for {model_name}")
+        return cached_data[model_name]
 
     # NPZファイル読み込み
-    features_path = data_dir / f"features_{window_size_label}.npz"
-    metadata_path = data_dir / f"metadata_{window_size_label}.json"
+    features_path = data_dir / f"features_{model_name}.npz"
+    metadata_path = data_dir / f"metadata_{model_name}.json"
 
     if not features_path.exists():
         raise FileNotFoundError(f"Features file not found: {features_path}")
@@ -120,23 +134,33 @@ def load_features(window_size_label='5.0s'):
     data = np.load(features_path)
     features = data['features']
 
-    # UMAP埋め込みが存在すれば読み込む
-    umap_embeddings = data.get('umap_embeddings', None)
-    if umap_embeddings is not None:
-        print(f"  Loaded precomputed UMAP embeddings: {umap_embeddings.shape}")
+    # 生データが存在すれば読み込む
+    sensor_data = data.get('sensor_data', None)
+    if sensor_data is not None:
+        print(f"  Loaded sensor data: {sensor_data.shape}")
+
+    # t-SNE埋め込みが存在すれば読み込む
+    tsne_embeddings = data.get('tsne_embeddings', None)
+    if tsne_embeddings is not None:
+        print(f"  Loaded precomputed t-SNE embeddings: {tsne_embeddings.shape}")
 
     print(f"Loading metadata from {metadata_path}")
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
 
     # Locationをカテゴリ化（古いデータ互換性のため）
-    metadata['locations'] = [map_location_to_category(loc) for loc in metadata['locations']]
-    print(f"  Categorized locations: {len(set(metadata['locations']))} unique categories")
+    if 'locations' in metadata:
+        metadata['locations'] = [map_location_to_category(loc) for loc in metadata['locations']]
+        print(f"  Categorized locations: {len(set(metadata['locations']))} unique categories")
 
-    # キャッシュに保存
-    cached_data[window_size_label] = (features, metadata, umap_embeddings)
+    # body_partsがない場合は追加
+    if 'body_parts' not in metadata and 'locations' in metadata:
+        metadata['body_parts'] = metadata['locations']
 
-    return features, metadata, umap_embeddings
+    # キャッシュに保存（t-SNE埋め込みも含む）
+    cached_data[model_name] = (features, metadata, sensor_data, tsne_embeddings)
+
+    return features, metadata, sensor_data, tsne_embeddings
 
 
 def apply_filters(features, metadata, selected_datasets=None, selected_activities=None, selected_locations=None):
@@ -189,46 +213,6 @@ def apply_filters(features, metadata, selected_datasets=None, selected_activitie
     return filtered_features, filtered_metadata, indices
 
 
-def reduce_dimensions(features, method='umap', n_components=2, precomputed_umap=None, filter_indices=None):
-    """
-    次元削減を実行
-
-    Args:
-        features: 特徴ベクトル (N, feature_dim)
-        method: 次元削減手法 ('umap', 'tsne', 'pca')
-        n_components: 削減後の次元数
-        precomputed_umap: 事前計算されたUMAP埋め込み (N, 2) - methodが'umap'の場合に使用
-        filter_indices: フィルター適用後のインデックス
-
-    Returns:
-        embedded: 次元削減後の特徴 (N, n_components)
-    """
-    print(f"Reducing dimensions using {method.upper()}...")
-
-    if method == 'umap' and precomputed_umap is not None:
-        # 事前計算されたUMAP埋め込みを使用
-        print("  Using precomputed UMAP embeddings")
-        if filter_indices is not None:
-            embedded = precomputed_umap[filter_indices]
-        else:
-            embedded = precomputed_umap
-    elif method == 'umap':
-        # UMAPを新規計算（事前計算がない場合のフォールバック）
-        print("  Computing UMAP on-the-fly...")
-        reducer = umap.UMAP(n_components=n_components, random_state=42)
-        embedded = reducer.fit_transform(features)
-    elif method == 'tsne':
-        reducer = TSNE(n_components=n_components, random_state=42)
-        embedded = reducer.fit_transform(features)
-    elif method == 'pca':
-        reducer = PCA(n_components=n_components)
-        embedded = reducer.fit_transform(features)
-    else:
-        raise ValueError(f"Unknown method: {method}")
-
-    return embedded
-
-
 def create_plotly_figure(embedded, metadata, color_by='dataset',
                          selected_datasets=None, selected_activities=None, selected_locations=None):
     """
@@ -258,6 +242,15 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
         unique_categories = sorted(set(categories))
         legend_title = 'Dataset'
         selected_items = selected_datasets or []
+    elif color_by == 'dataset_activity':
+        # Dataset × Activity × Location の組み合わせ
+        categories = [f"{dataset}_{activity}_{location}"
+                     for dataset, activity, location in zip(metadata['datasets'],
+                                                             metadata['activity_names'],
+                                                             metadata['locations'])]
+        unique_categories = sorted(set(categories))
+        legend_title = 'Dataset: Activity (Location)'
+        selected_items = []  # フィルターは別途適用
     elif color_by == 'activity':
         # アクティビティはデータセット・ロケーションとペアで扱う（dataset/activity/location形式）
         categories = [f"{dataset}/{activity}/{location}"
@@ -283,9 +276,15 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
         dataset_mask = np.isin(metadata['datasets'], selected_datasets)
         highlight_mask &= dataset_mask
 
-    # アクティビティフィルター
+    # アクティビティフィルター（dataset_activity ペアで処理）
     if selected_activities:
-        activity_mask = np.isin(metadata['activity_names'], selected_activities)
+        # selected_activities は ["dsads_Walking", "mhealth_Standing", ...] の形式
+        # 各サンプルの dataset_activity を構築
+        sample_dataset_activities = [
+            f"{dataset}_{activity}"
+            for dataset, activity in zip(metadata['datasets'], metadata['activity_names'])
+        ]
+        activity_mask = np.isin(sample_dataset_activities, selected_activities)
         highlight_mask &= activity_mask
 
     # Locationフィルター
@@ -324,6 +323,8 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
 
     # カテゴリごとにトレースを追加
     total_highlighted = 0
+    legendgroup_seen = set()  # 各legendgroupで最初のトレースか判定
+
     for idx, category in enumerate(unique_categories):
         category_mask = np.array(categories) == category
 
@@ -354,22 +355,41 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
                 )
                 hover_texts.append(hover_text)
 
-            fig.add_trace(
-                go.Scattergl(
-                    x=embedded[highlighted_indices, 0].tolist(),
-                    y=embedded[highlighted_indices, 1].tolist(),
-                    mode='markers',
-                    marker=dict(
-                        size=5,
-                        color=color_map[category],
-                        opacity=0.7,
-                        line=dict(width=0.5, color='white')
-                    ),
-                    name=category,
-                    hovertext=hover_texts,
-                    hoverinfo='text'
-                )
+            # dataset_activityの場合は凡例をグループ化
+            # Dataset_Location を接頭辞として、Activity を個別トレースに（legendgroupなし）
+            if color_by == 'dataset_activity' and '_' in category:
+                parts = category.split('_')
+                if len(parts) >= 3:
+                    dataset = parts[0]
+                    activity = '_'.join(parts[1:-1])  # 中間部分全てをactivityとして扱う
+                    location = parts[-1]
+                    # 接頭辞として表示（legendgroupは使わない = 個別トグル可能）
+                    trace_name = f"[{dataset}_{location}] {activity}"
+                else:
+                    # fallback
+                    trace_name = category
+            else:
+                trace_name = category
+
+            trace_dict = dict(
+                x=embedded[highlighted_indices, 0].tolist(),
+                y=embedded[highlighted_indices, 1].tolist(),
+                mode='markers',
+                marker=dict(
+                    size=5,
+                    color=color_map[category],
+                    opacity=0.7,
+                    line=dict(width=0.5, color='white')
+                ),
+                name=trace_name,
+                hovertext=hover_texts,
+                hoverinfo='text',
+                customdata=highlighted_indices.tolist()  # グローバルインデックスを保存
             )
+
+            # legendgroupは使用しない（個別トグルを可能にするため）
+
+            fig.add_trace(go.Scattergl(**trace_dict))
 
     print(f"\n[DEBUG] Trace creation complete:")
     print(f"  Total highlighted: {total_highlighted}")
@@ -389,7 +409,10 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
             y=0.99,
             xanchor="left",
             x=1.01,
-            font=dict(size=10)
+            font=dict(size=9),
+            tracegroupgap=10,  # グループ間のスペース
+            itemsizing='constant',  # アイコンサイズを一定に
+            itemwidth=30  # アイテム幅
         )
     )
 
@@ -402,11 +425,41 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/api/models')
+def get_models_endpoint():
+    """利用可能なモデル一覧を返す"""
+    try:
+        models = get_available_models()
+        return jsonify({
+            'success': True,
+            'models': models
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/metadata/<window_size>')
 def get_metadata(window_size):
     """メタデータを取得"""
     try:
-        _, metadata, _ = load_features(window_size)
+        print(f"[get_metadata] Loading metadata for window_size: {window_size}")
+        _, metadata, _, _ = load_features(window_size)
+
+        print(f"[get_metadata] Metadata keys: {list(metadata.keys())}")
+        print(f"[get_metadata] Total datasets entries: {len(metadata.get('datasets', []))}")
+
+        # 必須フィールドの確認
+        if 'datasets' not in metadata:
+            raise ValueError("Missing 'datasets' field in metadata")
+        if 'activity_names' not in metadata:
+            raise ValueError("Missing 'activity_names' field in metadata")
+        if 'locations' not in metadata:
+            raise ValueError("Missing 'locations' field in metadata")
 
         # ユニークな値を取得
         unique_datasets = sorted(set(metadata['datasets']))
@@ -425,13 +478,20 @@ def get_metadata(window_size):
             for dataset, activities in activities_by_dataset.items()
         }
 
-        return jsonify({
+        response_data = {
             'datasets': unique_datasets,
             'activities_by_dataset': activities_by_dataset,
             'locations': unique_locations,
-            'total_samples': metadata['total_samples']
-        })
+            'total_samples': len(metadata['datasets'])  # メタデータから動的に計算
+        }
+
+        print(f"[get_metadata] Response: {len(unique_datasets)} datasets, {len(unique_locations)} locations, {len(metadata['datasets'])} total samples")
+
+        return jsonify(response_data)
     except Exception as e:
+        import traceback
+        print(f"[get_metadata] ERROR: {str(e)}")
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
@@ -441,39 +501,33 @@ def visualize():
     try:
         params = request.json
 
-        window_size = params.get('window_size', '5.0s')
-        method = params.get('method', 'umap')
-        color_by = params.get('color_by', 'dataset')
+        model_name = params.get('model_name', params.get('window_size', '5.0s'))  # 互換性のため
+        method = params.get('method', 'tsne')  # デフォルトをt-SNEに変更
+        color_by = params.get('color_by', 'dataset_activity')  # デフォルトをdataset_activityに変更
         selected_datasets = params.get('selected_datasets', None)
         selected_activities = params.get('selected_activities', None)
         selected_locations = params.get('selected_locations', None)
 
         # データ読み込み（全データ）
-        features, metadata, umap_embeddings = load_features(window_size)
+        features, metadata, sensor_data, tsne_embeddings = load_features(model_name)
 
         print(f"Total samples: {len(features)}")
 
-        # 次元削減（全データに対して実行）
-        if method == 'umap' and umap_embeddings is not None:
-            # 事前計算されたUMAP埋め込みを使用
-            print("Using precomputed UMAP embeddings")
-            embedded = umap_embeddings
-        elif method == 'umap':
-            print("Computing UMAP on-the-fly...")
-            reducer = umap.UMAP(n_components=2, random_state=42)
-            embedded = reducer.fit_transform(features)
-        elif method == 'tsne':
-            print("Computing t-SNE...")
-            from sklearn.manifold import TSNE
-            reducer = TSNE(n_components=2, random_state=42)
-            embedded = reducer.fit_transform(features)
+        # 次元削減（t-SNEは事前計算を使用、PCAはオンザフライ）
+        if method == 'tsne':
+            if tsne_embeddings is not None:
+                print("Using precomputed t-SNE embeddings")
+                embedded = tsne_embeddings
+            else:
+                print("Computing t-SNE on-the-fly (precomputed not available)...")
+                reducer = TSNE(n_components=2, perplexity=30, max_iter=1000, random_state=42)
+                embedded = reducer.fit_transform(features)
         elif method == 'pca':
             print("Computing PCA...")
-            from sklearn.decomposition import PCA
             reducer = PCA(n_components=2)
             embedded = reducer.fit_transform(features)
         else:
-            return jsonify({'error': f'Unknown method: {method}'}), 400
+            return jsonify({'error': f'Unknown method: {method}. Only tsne and pca are supported.'}), 400
 
         # プロット作成（全データ、選択されたものをハイライト）
         fig = create_plotly_figure(
@@ -510,6 +564,51 @@ def visualize():
             'graph': graph_dict,
             'n_samples': len(features),
             'n_highlighted': int(n_highlighted)
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/sensor_data', methods=['POST'])
+def get_sensor_data():
+    """
+    クリックされたポイントの生センサーデータを取得
+    """
+    try:
+        params = request.json
+        dataset = params.get('dataset')
+        location = params.get('location')
+        activity = params.get('activity')
+        point_index = params.get('point_index', 0)  # 全データ内でのインデックス
+        model_name = params.get('model_name', 'rotation')
+
+        print(f"\n[API /sensor_data] Request:")
+        print(f"  Dataset: {dataset}, Location: {location}, Activity: {activity}")
+        print(f"  Point index: {point_index}")
+
+        # キャッシュからデータ取得
+        features, metadata, sensor_data, _ = load_features(model_name)
+
+        if sensor_data is None:
+            return jsonify({'error': 'Sensor data not available. Please re-run extract_model_features.py with updated version.'}), 404
+
+        # point_indexを直接使用
+        if point_index >= len(sensor_data):
+            return jsonify({'error': f'Invalid point index: {point_index}'}), 400
+
+        raw_sensor = sensor_data[point_index]  # shape: (3, window_size)
+
+        print(f"  Retrieved sensor data at index {point_index}, shape: {raw_sensor.shape}")
+
+        return jsonify({
+            'sensor_data': raw_sensor.tolist(),  # (3, window_size)
+            'dataset': dataset,
+            'location': location,
+            'activity': activity,
+            'shape': list(raw_sensor.shape)
         })
 
     except Exception as e:

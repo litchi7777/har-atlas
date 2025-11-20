@@ -73,7 +73,7 @@ multitask:
   # - contrastive_*: 対照学習タスク（将来拡張用）
   # - invariant_*: 不変性学習タスク（invariant_orientation: 向き不変性）
   ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp", "invariant_orientation"]
-  task_weights: [1.0, 1.0, 1.0, 0.1]  # invariant_orientationの重みを0.1に設定
+  task_weights: [1.0, 1.0, 1.0, 1.0] # invariant_orientationの重みを1.0に設定
   apply_prob: 0.5  # binary_*タスクの適用確率
   mask_ratio: 0.15  # masking_*タスクのマスク比率
 

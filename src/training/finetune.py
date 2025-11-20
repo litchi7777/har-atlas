@@ -679,9 +679,17 @@ def setup_batch_dataloaders(
         )
 
     # 入力形状を取得
-    in_channels, sequence_length = get_input_shape(train_dataset)
+    in_channels, data_sequence_length = get_input_shape(train_dataset)
 
-    logger.info(f"Input shape: ({in_channels}, {sequence_length})")
+    # window_clip が有効な場合は、設定から sequence_length を取得
+    # （実際のモデルアーキテクチャはクリップ後のサイズで決まる）
+    if sensor_config.get("window_clip", {}).get("enabled", False):
+        sequence_length = sensor_config.get("window_size", data_sequence_length)
+        logger.info(f"Input shape: ({in_channels}, {data_sequence_length}) -> Window clip enabled, using window_size={sequence_length} for model architecture")
+    else:
+        sequence_length = data_sequence_length
+        logger.info(f"Input shape: ({in_channels}, {sequence_length})")
+
     logger.info(f"Training batches per epoch: {len(train_loader)}")
     logger.info(f"Validation batches: {len(val_loader)}")
     logger.info(f"Test batches: {len(test_loader)}")
@@ -829,10 +837,19 @@ def setup_multi_device_dataloaders(
     sample_device_data_list, _ = train_dataset[0]
     sample_device_data = sample_device_data_list[0]
     in_channels = sample_device_data.shape[0]
-    sequence_length = sample_device_data.shape[1]
+    data_sequence_length = sample_device_data.shape[1]
 
-    logger.info(f"Number of devices: {len(device_locations)}")
-    logger.info(f"Input shape per device: ({in_channels}, {sequence_length})")
+    # window_clip が有効な場合は、設定から sequence_length を取得
+    # （実際のモデルアーキテクチャはクリップ後のサイズで決まる）
+    if sensor_config.get("window_clip", {}).get("enabled", False):
+        sequence_length = sensor_config.get("window_size", data_sequence_length)
+        logger.info(f"Number of devices: {len(device_locations)}")
+        logger.info(f"Input shape per device: ({in_channels}, {data_sequence_length}) -> Window clip enabled, using window_size={sequence_length} for model architecture")
+    else:
+        sequence_length = data_sequence_length
+        logger.info(f"Number of devices: {len(device_locations)}")
+        logger.info(f"Input shape per device: ({in_channels}, {sequence_length})")
+
     logger.info(f"Training batches per epoch: {len(train_loader)}")
     logger.info(f"Validation batches: {len(val_loader)}")
     logger.info(f"Test batches: {len(test_loader)}")
@@ -852,6 +869,7 @@ def create_model(
     config: Dict[str, Any],
     num_classes: int,
     in_channels: int,
+    sequence_length: int,
     device: torch.device,
     logger,
 ) -> nn.Module:
@@ -861,18 +879,26 @@ def create_model(
         config: 設定辞書
         num_classes: クラス数
         in_channels: 入力チャネル数
+        sequence_length: 入力シーケンス長
         device: デバイス
         logger: ロガー
 
     Returns:
         作成されたモデル
     """
+    # ウィンドウサイズに応じて適切なアーキテクチャを自動選択
+    # （事前学習時と同じロジック）
+    nano_window = sequence_length < 20   # 15サンプル用
+    micro_window = 20 <= sequence_length < 100  # 30, 60サンプル用
+
     model = SensorClassificationModel(
         in_channels=in_channels,
         num_classes=num_classes,
         backbone=config["model"].get("backbone", "simple_cnn"),
         pretrained_path=config["model"].get("pretrained_path"),
         freeze_backbone=config["model"].get("freeze_backbone", False),
+        micro_window=micro_window,
+        nano_window=nano_window,
         device=device,
     )
 
@@ -890,6 +916,7 @@ def create_multi_device_model(
     config: Dict[str, Any],
     num_classes: int,
     in_channels: int,
+    sequence_length: int,
     device_locations: List[str],
     device: torch.device,
     logger,
@@ -900,6 +927,7 @@ def create_multi_device_model(
         config: 設定辞書
         num_classes: クラス数
         in_channels: 各デバイスの入力チャネル数
+        sequence_length: 入力シーケンス長
         device_locations: デバイス部位のリスト
         device: デバイス
         logger: ロガー
@@ -909,6 +937,11 @@ def create_multi_device_model(
     """
     num_devices = len(device_locations)
 
+    # ウィンドウサイズに応じて適切なアーキテクチャを自動選択
+    # （事前学習時と同じロジック）
+    nano_window = sequence_length < 20   # 15サンプル用
+    micro_window = 20 <= sequence_length < 100  # 30, 60サンプル用
+
     model = MultiDeviceSensorClassificationModel(
         num_devices=num_devices,
         in_channels=in_channels,
@@ -916,6 +949,8 @@ def create_multi_device_model(
         backbone=config["model"].get("backbone", "resnet"),
         pretrained_path=config["model"].get("pretrained_path"),
         freeze_backbone=config["model"].get("freeze_backbone", False),
+        micro_window=micro_window,
+        nano_window=nano_window,
         device_names=device_locations,
         device=device,
     )
@@ -1223,10 +1258,10 @@ def main(args: argparse.Namespace) -> None:
     # モデルを作成
     if is_multi_device:
         model = create_multi_device_model(
-            config, num_classes, in_channels, device_locations, device, logger
+            config, num_classes, in_channels, sequence_length, device_locations, device, logger
         )
     else:
-        model = create_model(config, num_classes, in_channels, device, logger)
+        model = create_model(config, num_classes, in_channels, sequence_length, device, logger)
 
     # 損失関数を定義
     criterion = nn.CrossEntropyLoss(

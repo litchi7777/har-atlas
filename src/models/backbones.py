@@ -786,6 +786,8 @@ class SensorClassificationModel(nn.Module):
         pretrained_path: Optional[str] = None,
         freeze_backbone: bool = False,
         foundationUK: bool = False,
+        micro_window: bool = False,
+        nano_window: bool = False,
         device: Optional[torch.device] = None,
     ):
         super().__init__()
@@ -806,7 +808,12 @@ class SensorClassificationModel(nn.Module):
             encoder_dim = self.encoder.lstm.hidden_size
             self.encoder.fc = nn.Identity()
         elif backbone == "resnet":
-            self.encoder = Resnet(n_channels=in_channels, foundationUK=foundationUK)
+            self.encoder = Resnet(
+                n_channels=in_channels,
+                foundationUK=foundationUK,
+                micro_window=micro_window,
+                nano_window=nano_window,
+            )
             encoder_dim = self.encoder.output_dim
         else:
             raise ValueError(f"Unknown backbone: {backbone}")
@@ -1006,6 +1013,8 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         backbone: str = "resnet",
         pretrained_path: Optional[str] = None,
         freeze_backbone: bool = False,
+        micro_window: bool = False,
+        nano_window: bool = False,
         device_names: Optional[List[str]] = None,
         device: Optional[torch.device] = None,
     ):
@@ -1018,6 +1027,8 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.backbone_name = backbone
+        self.micro_window = micro_window
+        self.nano_window = nano_window
         self.device_names = device_names or [f"Device{i}" for i in range(num_devices)]
         self.device = device if device is not None else torch.device("cpu")
 
@@ -1025,7 +1036,7 @@ class MultiDeviceSensorClassificationModel(nn.Module):
         # 事前学習済みモデルと同じ命名規則（feature_extractor）を使用
         self.encoders = nn.ModuleDict()
         for i in range(num_devices):
-            encoder = self._create_encoder(in_channels, backbone)
+            encoder = self._create_encoder(in_channels, backbone, micro_window, nano_window)
             # エンコーダーを指定されたデバイスに配置
             encoder = encoder.to(self.device)
             # ModuleDictに直接エンコーダーを格納
@@ -1068,14 +1079,24 @@ class MultiDeviceSensorClassificationModel(nn.Module):
             f"device={self.device}"
         )
 
-    def _create_encoder(self, in_channels: int, backbone: str) -> nn.Module:
+    def _create_encoder(
+        self,
+        in_channels: int,
+        backbone: str,
+        micro_window: bool = False,
+        nano_window: bool = False,
+    ) -> nn.Module:
         """エンコーダーを作成
 
         Resnetの場合、feature_extractorを直接返す（layer1, layer2等の命名を保持）
         """
         if backbone == "resnet":
             from src.models.backbones import Resnet
-            resnet = Resnet(n_channels=in_channels)
+            resnet = Resnet(
+                n_channels=in_channels,
+                micro_window=micro_window,
+                nano_window=nano_window,
+            )
             # feature_extractorを直接返す（事前学習済みモデルと同じキー構造）
             encoder = resnet.feature_extractor
         elif backbone == "simple_cnn":

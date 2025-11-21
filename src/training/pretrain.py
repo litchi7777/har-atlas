@@ -166,6 +166,15 @@ def create_augmentation_transforms(
                 time_mask_ratio=mask_ratio, channel_mask_ratio=mask_ratio
             )
 
+    # 回転拡張の処理（オプション、すべてのタスクに適用）
+    rotation_config = config.get("rotation_augmentation", {})
+    rotation_enabled = rotation_config.get("enabled", False)
+
+    if rotation_enabled:
+        from src.data.augmentations import RandomRotation3D
+        rotation_type = rotation_config.get("rotation_type", "random")
+        transforms["rotation_augmentation"] = RandomRotation3D(rotation_type=rotation_type)
+
     return transforms
 
 
@@ -476,7 +485,9 @@ def apply_augmentations_batch(
     Args:
         x: 入力データ (batch_size, channels, time_steps)
         ssl_tasks: SSLタスクのリスト
-        transforms: 拡張辞書（'base_augmentation'キーに通常の拡張パイプラインを含む）
+        transforms: 拡張辞書
+            - 'base_augmentation': 通常の拡張パイプライン
+            - 'rotation_augmentation': 回転拡張（オプション）
         apply_prob: binary_*タスクの適用確率
         device: デバイス
 
@@ -503,6 +514,12 @@ def apply_augmentations_batch(
             augmented_sample = base_aug(sample)
             augmented_batch.append(augmented_sample)
         x_base = torch.stack(augmented_batch).to(device)  # 確実にデバイスに転送
+
+    # 回転拡張を適用（オプション、すべてのタスクに適用）
+    # バッチ内の各サンプルに異なるランダム回転を適用して偏りを解消
+    if "rotation_augmentation" in transforms:
+        rotation_aug = transforms["rotation_augmentation"]
+        x_base = rotation_aug(x_base)  # バッチ全体に高速適用
 
     # Binary拡張タスク - バッチ全体に変換を適用してからマスクで選択
     binary_tasks = [t for t in ssl_tasks if t.startswith("binary_")]
@@ -560,27 +577,24 @@ def apply_augmentations_batch(
     for task in invariant_tasks:
         invariant_type = task.replace("invariant_", "")
 
-        # 元データ（view1）
+        # view1: すでに回転済みのデータ（rotation_augmentationが有効な場合）
         task_inputs_dict[task] = x_base.clone()
 
-        # Rotation augmentation（view2）
+        # view2: さらに別の回転を適用（対照学習用）
         if invariant_type == "orientation":
-            # RandomRotation3Dを適用
-            if "rotation_invariant" in transforms:
-                rotation_transform = transforms["rotation_invariant"]
+            # 回転変換を取得（rotation_augmentationと同じものを使用）
+            if "rotation_augmentation" in transforms:
+                rotation_transform = transforms["rotation_augmentation"]
             else:
-                # transformsになければその場で作成
+                # なければその場で作成
                 from src.data.augmentations import RandomRotation3D
                 rotation_transform = RandomRotation3D(rotation_type='random')
 
-            # 各サンプルに回転を適用
-            x_rotated_batch = []
-            for sample in x_base:
-                x_rotated = rotation_transform(sample)
-                x_rotated_batch.append(x_rotated)
-            x_rotated = torch.stack(x_rotated_batch).to(device)
+            # バッチ全体にさらに別の回転を適用
+            # x_base: すでに回転済み → さらに回転 = 2つの異なる回転状態
+            x_rotated = rotation_transform(x_base)
 
-            # ラベル: 回転後のデータ（contrastive lossではview2として使用）
+            # ラベル: さらに回転後のデータ（contrastive lossではview2として使用）
             labels_dict[task] = x_rotated
         else:
             # 他のinvarianceタイプ（将来の拡張用）

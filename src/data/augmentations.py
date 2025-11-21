@@ -807,10 +807,15 @@ class RandomRotation3D:
     Orientation Invariance学習用のaugmentation
     既存のRotationクラスは小角度（±15度）だが、これはSO(3)から均一サンプリング
 
+    バッチ処理対応: 各サンプルに異なる回転を高速適用
+
     使用例:
-        # Rotation Contrastive Learning
+        # 単一サンプル
         aug = RandomRotation3D(rotation_type='random')
-        x_rotated = aug(x)
+        x_rotated = aug(x)  # x: (channels, time_steps)
+
+        # バッチ処理
+        x_batch_rotated = aug(x_batch)  # x_batch: (batch, channels, time_steps)
     """
 
     def __init__(self, rotation_type: str = 'random'):
@@ -825,7 +830,7 @@ class RandomRotation3D:
     def __call__(self, x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         """
         Args:
-            x: (channels, time_steps)
+            x: (channels, time_steps) or (batch, channels, time_steps)
                - channels=3の場合: 3軸加速度として回転
                - channels=6の場合: [acc_xyz, gyro_xyz]として、加速度のみ回転
                - それ以外: 回転せずそのまま返す
@@ -839,12 +844,33 @@ class RandomRotation3D:
             return self._rotate_numpy(x)
 
     def _rotate_torch(self, x: torch.Tensor) -> torch.Tensor:
-        """PyTorchベースの回転（GPU対応）"""
+        """
+        PyTorchベースの回転（GPU対応、バッチ処理対応）
+
+        Args:
+            x: (channels, time_steps) or (batch, channels, time_steps)
+
+        Returns:
+            回転後のデータ（同じshape）
+        """
+        # バッチ次元があるか確認
+        if x.ndim == 3:
+            # バッチ処理: (batch, channels, time_steps)
+            return self._rotate_batch_torch(x)
+        elif x.ndim == 2:
+            # 単一サンプル: (channels, time_steps)
+            return self._rotate_single_torch(x)
+        else:
+            # 想定外の次元: そのまま返す
+            return x
+
+    def _rotate_single_torch(self, x: torch.Tensor) -> torch.Tensor:
+        """単一サンプルの回転（GPU対応）"""
         n_channels = x.shape[0]
 
         if n_channels == 3:
             # 3軸加速度: そのまま回転
-            R = self._random_rotation_matrix_torch(x.device, x.dtype)
+            R = self._random_rotation_matrix_torch(x.device, x.dtype, batch_size=1).squeeze(0)
             # (3, 3) @ (3, T) = (3, T)
             x_rotated = torch.mm(R, x)
             return x_rotated
@@ -852,8 +878,43 @@ class RandomRotation3D:
         elif n_channels == 6:
             # [acc_xyz, gyro_xyz]: 加速度のみ回転
             x_rotated = x.clone()
-            R = self._random_rotation_matrix_torch(x.device, x.dtype)
+            R = self._random_rotation_matrix_torch(x.device, x.dtype, batch_size=1).squeeze(0)
             x_rotated[0:3, :] = torch.mm(R, x[0:3, :])
+            # ジャイロも回転させるべきだが、簡単のため今はスキップ
+            return x_rotated
+
+        else:
+            # 3軸でも6軸でもない: 回転しない
+            return x
+
+    def _rotate_batch_torch(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        バッチ全体の回転（GPU高速処理）
+
+        各サンプルに異なるランダム回転を適用
+
+        Args:
+            x: (batch, channels, time_steps)
+
+        Returns:
+            x_rotated: (batch, channels, time_steps)
+        """
+        batch_size, n_channels, time_steps = x.shape
+
+        if n_channels == 3:
+            # 3軸加速度: バッチ全体を回転
+            # R: (batch, 3, 3), x: (batch, 3, T)
+            R = self._random_rotation_matrix_torch(x.device, x.dtype, batch_size=batch_size)
+            # bmm: (batch, 3, 3) @ (batch, 3, T) = (batch, 3, T)
+            x_rotated = torch.bmm(R, x)
+            return x_rotated
+
+        elif n_channels == 6:
+            # [acc_xyz, gyro_xyz]: 加速度のみ回転
+            x_rotated = x.clone()
+            R = self._random_rotation_matrix_torch(x.device, x.dtype, batch_size=batch_size)
+            # 加速度のみ回転
+            x_rotated[:, 0:3, :] = torch.bmm(R, x[:, 0:3, :])
             # ジャイロも回転させるべきだが、簡単のため今はスキップ
             return x_rotated
 
@@ -882,10 +943,11 @@ class RandomRotation3D:
     def _random_rotation_matrix_torch(
         self,
         device: torch.device,
-        dtype: torch.dtype
+        dtype: torch.dtype,
+        batch_size: int = 1
     ) -> torch.Tensor:
         """
-        SO(3)から均一ランダムに回転行列をサンプリング（PyTorch版）
+        SO(3)から均一ランダムに回転行列をサンプリング（PyTorch版、バッチ対応）
 
         QR分解による方法を使用:
         - ランダム行列Aを生成
@@ -893,35 +955,56 @@ class RandomRotation3D:
         - Qが直交行列（det(Q)=±1）
         - det(Q)=1になるよう調整
 
+        Args:
+            device: torch device
+            dtype: torch dtype
+            batch_size: 生成する回転行列の数
+
         Returns:
-            R: (3, 3) 回転行列
+            R: (batch_size, 3, 3) 回転行列
         """
         if self.rotation_type == 'random':
-            # SO(3)均一サンプリング
-            random_matrix = torch.randn(3, 3, device=device, dtype=dtype)
+            # SO(3)均一サンプリング（バッチ対応）
+            # 注: QR分解はFP16をサポートしないため、FP32で計算してから戻す
+            original_dtype = dtype
+            compute_dtype = torch.float32 if dtype == torch.float16 else dtype
+
+            random_matrix = torch.randn(batch_size, 3, 3, device=device, dtype=compute_dtype)
             Q, R_qr = torch.linalg.qr(random_matrix)
 
             # QR分解のRの対角成分の符号でQを調整
-            signs = torch.sign(torch.diag(R_qr))
-            Q = Q * signs
+            # signs: (batch, 3)
+            signs = torch.sign(torch.diagonal(R_qr, dim1=-2, dim2=-1))
+            # Qに符号を適用: (batch, 3, 3) * (batch, 1, 3)
+            Q = Q * signs.unsqueeze(-2)
 
             # det(Q)が-1の場合、1列反転してdet(Q)=1にする
-            if torch.det(Q) < 0:
-                Q[:, 0] = -Q[:, 0]
+            # det: (batch,)
+            det = torch.det(Q)
+            # 反転が必要なサンプルを特定
+            flip_mask = det < 0
+            # 該当するサンプルの1列目を反転
+            Q[flip_mask, :, 0] = -Q[flip_mask, :, 0]
+
+            # 元のdtypeに戻す
+            if original_dtype != compute_dtype:
+                Q = Q.to(original_dtype)
 
             return Q
 
         elif self.rotation_type == 'gravity_preserving':
-            # XY平面のみ回転（Z軸保持）
-            theta = torch.rand(1, device=device, dtype=dtype) * 2 * math.pi
+            # XY平面のみ回転（Z軸保持）（バッチ対応）
+            theta = torch.rand(batch_size, device=device, dtype=dtype) * 2 * math.pi
             cos_theta = torch.cos(theta)
             sin_theta = torch.sin(theta)
 
-            R = torch.tensor([
-                [cos_theta, -sin_theta, 0],
-                [sin_theta, cos_theta, 0],
-                [0, 0, 1]
-            ], device=device, dtype=dtype).squeeze()
+            # 回転行列を構築: (batch, 3, 3)
+            R = torch.zeros(batch_size, 3, 3, device=device, dtype=dtype)
+            R[:, 0, 0] = cos_theta
+            R[:, 0, 1] = -sin_theta
+            R[:, 1, 0] = sin_theta
+            R[:, 1, 1] = cos_theta
+            R[:, 2, 2] = 1.0
 
             return R
 

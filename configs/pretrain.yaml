@@ -18,35 +18,83 @@ sensor_data:
 
   # データセットとセンサー位置のペアを指定（必須）
   # 各ペアは [データセット名, センサー位置] の形式
-  # 手・腕のセンサー位置 + NHANES（巨大データセット）
+  # 全データセット × 全装着位置（回転不変性学習のため全身のデータを使用）
   dataset_location_pairs:
-    # DSADS - 手・腕 (2 locations)
+    # CHAD (1 locations)
+    - ["chad", "Pocket"]
+    # DSADS (5 locations)
     - ["dsads", "LeftArm"]
+    - ["dsads", "LeftLeg"]
     - ["dsads", "RightArm"]
-    # FORTHTrace - 手首 (2 locations)
+    - ["dsads", "RightLeg"]
+    - ["dsads", "Torso"]
+    # FORTHTrace (5 locations)
+    - ["forthtrace", "LeftAnkle"]
     - ["forthtrace", "LeftWrist"]
+    - ["forthtrace", "RightThigh"]
     - ["forthtrace", "RightWrist"]
-    # LARA - 腕 (2 locations)
+    - ["forthtrace", "Torso"]
+    # HAR70+ (2 locations)
+    - ["har70plus", "LowerBack"]
+    - ["har70plus", "RightThigh"]
+    # HARTH (2 locations)
+    - ["harth", "LowerBack"]
+    - ["harth", "RightThigh"]
+    # HHAR (10 locations)
+    - ["hhar", "gear_1"]
+    - ["hhar", "gear_2"]
+    - ["hhar", "lgwatch_1"]
+    - ["hhar", "lgwatch_2"]
+    - ["hhar", "nexus4_1"]
+    - ["hhar", "nexus4_2"]
+    - ["hhar", "s3_1"]
+    - ["hhar", "s3_2"]
+    - ["hhar", "s3mini_1"]
+    - ["hhar", "s3mini_2"]
+    # LARA (5 locations)
     - ["lara", "LeftArm"]
+    - ["lara", "LeftLeg"]
+    - ["lara", "Neck"]
     - ["lara", "RightArm"]
-    # MEX - 手首 (1 location)
+    - ["lara", "RightLeg"]
+    # MEX (2 locations)
+    - ["mex", "Thigh"]
     - ["mex", "Wrist"]
-    # MHEALTH - 手首 (1 location)
+    # MHEALTH (3 locations)
+    - ["mhealth", "Chest"]
+    - ["mhealth", "LeftAnkle"]
     - ["mhealth", "RightWrist"]
-    # NHANES - 常に含める（巨大データセット）(1 location)
+    # NHANES (1 locations)
     - ["nhanes", "PAX"]
-    # PAAL - 手首 (1 location)
+    # OPENPACK (4 locations)
+    - ["openpack", "atr01"]
+    - ["openpack", "atr02"]
+    - ["openpack", "atr03"]
+    - ["openpack", "atr04"]
+    # PAAL (1 locations)
     - ["paal", "Wrist"]
-    # PAMAP2 - 手 (1 location)
+    # PAMAP2 (3 locations)
+    - ["pamap2", "ankle"]
+    - ["pamap2", "chest"]
     - ["pamap2", "hand"]
-    # RealDisp - 腕 (4 locations)
+    # RealDisp (9 locations)
+    - ["realdisp", "Back"]
+    - ["realdisp", "LeftCalf"]
     - ["realdisp", "LeftLowerArm"]
+    - ["realdisp", "LeftThigh"]
     - ["realdisp", "LeftUpperArm"]
+    - ["realdisp", "RightCalf"]
     - ["realdisp", "RightLowerArm"]
+    - ["realdisp", "RightThigh"]
     - ["realdisp", "RightUpperArm"]
-    # SelfBACK - 手首 (1 location)
+    # SelfBACK (2 locations)
+    - ["selfback", "Thigh"]
     - ["selfback", "Wrist"]
-    # 合計: 19ペア（手・腕: 18, NHANES: 1）
+    # TMD (1 locations)
+    - ["tmd", "Smartphone"]
+    # USCHAD (1 locations)
+    - ["uschad", "Hip"]
+    # 合計: 17データセット × 57ペア（19ペア→57ペアに拡張）
 
   # バッチローダー設定
   batch_loader:
@@ -81,6 +129,11 @@ multitask:
 augmentation:
   enabled: false  # データ拡張を無効化（シンプル化のため）
   # mode: "mtl"  # light, medium, heavy, mtl
+
+# Rotation Augmentation（回転拡張）
+rotation_augmentation:
+  enabled: true  # すべてのSSLタスクに回転拡張を適用（バッチ内の偏り解消）
+  rotation_type: "random"  # random: SO(3)完全ランダム, gravity_preserving: Z軸保持
 
 # Training
 training:
@@ -123,23 +176,28 @@ seed: 42
 
 # Grid Search
 # 実行: python train.py pretrain
-# 3つのウィンドウサイズで並列実験（プリミティブ発見のため）
+# 回転拡張のAblation Study + ウィンドウサイズ比較
+# 合計: 2（回転あり/なし） × 3（ウィンドウサイズ） = 6実験
 grid_search:
   sensor_data:
     # ウィンドウサイズの比較実験（プリミティブ粒度の探索）
     window_size:
-      - 60   # 2.0秒 @ 30Hz（完全プリミティブ）
-      - 30   # 1.0秒 @ 30Hz（短縮プリミティブ）
-      - 15   # 0.5秒 @ 30Hz（アトミックプリミティブ）
+      #- 15   # 0.5秒 @ 30Hz（アトミックプリミティブ）
+      #- 60   # 2.0秒 @ 30Hz（完全プリミティブ）
+      - 150  # 5.0秒 @ 30Hz（長期プリミティブ）
+
+  rotation_augmentation:
+    # 回転拡張のAblation Study
+    enabled:
+      - false  # Baseline: 回転拡張なし
+      - true   # Proposed: 回転拡張あり
 
   model:
     pretrained_path:
       - null
   multitask:
     ssl_tasks:
-      # Baseline: 既存3タスク（向き不変性なし）
-      #- ["binary_permute", "binary_reverse", "binary_timewarp"]
-      # Proposed: 既存3タスク + 向き不変性
+      # 既存3タスク + 向き不変性
       - ["binary_permute", "binary_reverse", "binary_timewarp", "invariant_orientation"]
 
 
@@ -150,4 +208,4 @@ settings:
   parallel: true  # GPU並列実行
   experiments_per_gpu: 1  # 1つのGPUで同時実行する実験数（Pretrainは1推奨）
   max_workers: null  # nullの場合は available_gpus × experiments_per_gpu で自動計算
-  available_gpus: [0,1,2,3]  # 使用するGPUのリスト（例: [0, 1, 3]で複数GPU指定可能）
+  available_gpus: [2,3]  # 使用するGPUのリスト（例: [0, 1, 3]で複数GPU指定可能）

@@ -150,11 +150,8 @@ notebooks/outputs/
 # Claude Code temporary files
 .claude/
 
-# Documentation (handoff documents, notes)
-docs
+# Documentation archive only
 docs/archive/
-# Keep only RESEARCH_STATUS.md tracked
-!docs/RESEARCH_STATUS.md
 
 # Analysis outputs (generated figures)
 analysis/figures/

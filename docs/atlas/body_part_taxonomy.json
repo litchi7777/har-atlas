@@ -1,0 +1,231 @@
+{
+  "version": "1.0",
+  "description": "Body part taxonomy for sensor placement mapping",
+
+  "categories": {
+    "head": {
+      "description": "Head and neck sensors",
+      "locations": [
+        "Head",
+        "Neck"
+      ],
+      "characteristics": "Captures head tilt, neck rotation, nodding, looking direction"
+    },
+    "wrist": {
+      "description": "Wrist and forearm sensors",
+      "locations": [
+        "Wrist",
+        "RightWrist",
+        "LeftWrist",
+        "hand",
+        "RightHand",
+        "LeftHand"
+      ],
+      "characteristics": "Captures arm swing, hand gestures, fine motor movements"
+    },
+    "forearm": {
+      "description": "Forearm and upper arm sensors",
+      "locations": [
+        "RightArm",
+        "LeftArm",
+        "RightLowerArm",
+        "LeftLowerArm",
+        "RightUpperArm",
+        "LeftUpperArm"
+      ],
+      "characteristics": "Captures larger arm movements, similar to wrist but less fine-grained"
+    },
+    "hip": {
+      "description": "Hip and waist sensors (body center)",
+      "locations": [
+        "Hip",
+        "LowerBack",
+        "Waist",
+        "Pocket"
+      ],
+      "characteristics": "Captures gait patterns, body sway, center of mass movement"
+    },
+    "chest": {
+      "description": "Chest and torso sensors",
+      "locations": [
+        "Chest",
+        "Torso",
+        "Back",
+        "Neck"
+      ],
+      "characteristics": "Captures torso rotation, breathing, posture"
+    },
+    "thigh": {
+      "description": "Thigh sensors",
+      "locations": [
+        "RightThigh",
+        "LeftThigh",
+        "Thigh"
+      ],
+      "characteristics": "Captures leg swing, step phase, sitting detection"
+    },
+    "calf": {
+      "description": "Calf and lower leg sensors",
+      "locations": [
+        "RightCalf",
+        "LeftCalf",
+        "RightLeg",
+        "LeftLeg"
+      ],
+      "characteristics": "Captures step impact, ankle movement"
+    },
+    "ankle": {
+      "description": "Ankle and foot sensors",
+      "locations": [
+        "ankle",
+        "LeftAnkle",
+        "RightAnkle"
+      ],
+      "characteristics": "Captures foot strike, step cycle, ground contact"
+    }
+  },
+
+  "category_groups": {
+    "upper_body": ["wrist", "forearm", "chest"],
+    "lower_body": ["thigh", "calf", "ankle"],
+    "center_body": ["hip", "chest"]
+  },
+
+  "atomic_motion_scope": {
+    "wrist": "W01-W20: Arm and hand movements",
+    "forearm": "W01-W20: Similar to wrist (merged for learning)",
+    "hip": "H01-H20: Gait, posture, body center movements",
+    "chest": "C01-C15: Torso rotation, breathing, posture",
+    "thigh": "L01-L20: Leg movements (shared with calf/ankle)",
+    "calf": "L01-L20: Leg movements (shared with thigh/ankle)",
+    "ankle": "L01-L20: Leg movements (shared with thigh/calf)"
+  },
+
+  "dataset_sensor_mapping": {
+    "dsads": {
+      "Torso": "chest",
+      "RightArm": "forearm",
+      "LeftArm": "forearm",
+      "RightLeg": "calf",
+      "LeftLeg": "calf"
+    },
+    "mhealth": {
+      "Chest": "chest",
+      "LeftAnkle": "ankle",
+      "RightWrist": "wrist"
+    },
+    "pamap2": {
+      "hand": "wrist",
+      "chest": "chest",
+      "ankle": "ankle"
+    },
+    "uschad": {
+      "Hip": "hip"
+    },
+    "harth": {
+      "LowerBack": "hip",
+      "RightThigh": "thigh"
+    },
+    "realdisp": {
+      "LeftCalf": "calf",
+      "LeftThigh": "thigh",
+      "RightCalf": "calf",
+      "RightThigh": "thigh",
+      "Back": "chest",
+      "LeftLowerArm": "forearm",
+      "LeftUpperArm": "forearm",
+      "RightLowerArm": "forearm",
+      "RightUpperArm": "forearm"
+    },
+    "forthtrace": {
+      "LeftWrist": "wrist",
+      "RightWrist": "wrist",
+      "Torso": "chest",
+      "RightThigh": "thigh",
+      "LeftAnkle": "ankle"
+    },
+    "har70plus": {
+      "LowerBack": "hip",
+      "RightThigh": "thigh"
+    },
+    "selfback": {
+      "Wrist": "wrist",
+      "Thigh": "thigh"
+    },
+    "mex": {
+      "Wrist": "wrist",
+      "Thigh": "thigh"
+    },
+    "lara": {
+      "LeftArm": "forearm",
+      "LeftLeg": "calf",
+      "Neck": "head",
+      "RightArm": "forearm",
+      "RightLeg": "calf"
+    },
+    "paal": {
+      "Wrist": "wrist"
+    },
+    "capture24": {
+      "Wrist": "wrist"
+    },
+    "chad": {
+      "Pocket": "hip",
+      "Wrist": "wrist"
+    },
+    "hhar": {
+      "Smartphone": "hip"
+    },
+    "motionsense": {
+      "Pocket": "hip"
+    },
+    "tmd": {
+      "Smartphone": "hip"
+    },
+    "opportunity": {
+      "BACK": "chest",
+      "RUA": "forearm",
+      "RLA": "forearm",
+      "LUA": "forearm",
+      "LLA": "forearm",
+      "L_SHOE": "ankle",
+      "R_SHOE": "ankle"
+    },
+    "realworld": {
+      "Chest": "chest",
+      "Forearm": "forearm",
+      "Head": "head",
+      "Shin": "calf",
+      "Thigh": "thigh",
+      "UpperArm": "forearm",
+      "Waist": "hip"
+    },
+    "ward": {
+      "LeftArm": "forearm",
+      "RightArm": "forearm",
+      "Waist": "hip",
+      "LeftAnkle": "ankle",
+      "RightAnkle": "ankle"
+    },
+    "imsb": {
+      "Wrist": "wrist",
+      "Neck": "head"
+    },
+    "imwsha": {
+      "Wrist": "wrist",
+      "Chest": "chest",
+      "Thigh": "thigh"
+    },
+    "hmp": {
+      "RightWrist": "wrist"
+    },
+    "sbrhapt": {
+      "Waist": "hip"
+    }
+  },
+
+  "notes": {
+    "merge_strategy": "For learning, forearm merges with wrist (similar W-series atomic motions). Thigh/calf/ankle share L-series atomic motions.",
+    "pocket_smartphone": "Pocket and Smartphone placements are mapped to hip category (closest body part)."
+  }
+}

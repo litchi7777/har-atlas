@@ -246,6 +246,13 @@
     },
     "tmd": {
       "Smartphone": "hip"
+    },
+    "wisdm": {
+      "Phone": "hip",
+      "Watch": "wrist"
+    },
+    "capture24": {
+      "Wrist": "wrist"
     }
   },
 

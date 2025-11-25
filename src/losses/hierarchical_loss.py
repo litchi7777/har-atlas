@@ -2,12 +2,12 @@
 Hierarchical SSL Loss for Motion Primitive Discovery
 
 3階層のContrastive Learningを実装:
-- L_complex: Complex Activity (level=0) 内のContrastive Loss（データセット内）
-- L_simple: Simple Activity (level=1) 内のContrastive Loss（データセット内）
-- L_atomic: Body Part別Prototype学習（クロスデータセット、Atomic共有でsoft positive）
+- L_atomic (重み大): 同じAtomic Motion（Prototype）→ positive（PiCOで推定、クロスデータセット）
+- L_activity (重み中): 同じActivity + 同じデータセット → positive
+- L_complex (重み小): 同じComplex Activity + 同じデータセット → positive
 
-L_total = λ0 * L_complex + λ1 * L_simple + λ2 * L_atomic
-λ0=0.1, λ1=0.3, λ2=0.6（階層が深いほど重視）
+L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
+λ0=0.1, λ1=0.3, λ2=0.6
 
 Usage:
     loss_fn = HierarchicalSSLLoss(
@@ -252,6 +252,7 @@ class ComplexActivityLoss(nn.Module):
 
     同じComplex Activity内のサンプルをpositive
     データセット内のみを対象
+    重み: 小（Complex Activityは内部に多様なSimple Activityを含むため）
     """
 
     def __init__(self, atlas: "AtlasLoader", temperature: float = 0.1):
@@ -278,13 +279,13 @@ class ComplexActivityLoss(nn.Module):
         device = embeddings.device
         batch_size = len(activity_ids)
 
-        # Complex Activityのみを抽出
+        # Complex Activity (level=0) のみを抽出
         complex_indices = []
         complex_activities = []
 
         for i, act in enumerate(activity_ids):
             level = self.atlas.get_activity_level(act)
-            if level == 0:  # Complex
+            if level == 0:  # Complex Activity
                 complex_indices.append(i)
                 complex_activities.append(act)
 
@@ -310,10 +311,11 @@ class ComplexActivityLoss(nn.Module):
 
 class SimpleActivityLoss(nn.Module):
     """
-    Simple Activity (level=1) のContrastive Loss
+    Activity-level Contrastive Loss
 
-    同じSimple Activity内のサンプルをpositive
+    同じActivity内のサンプルをpositive（Level関係なく全Activity対象）
     データセット内のみを対象
+    重み: 中
     """
 
     def __init__(self, atlas: "AtlasLoader", temperature: float = 0.1):
@@ -335,39 +337,21 @@ class SimpleActivityLoss(nn.Module):
             dataset_labels: (batch,) Dataset ID
 
         Returns:
-            Simple Activity Contrastive Loss
+            Activity Contrastive Loss
         """
         device = embeddings.device
-        batch_size = len(activity_ids)
 
-        # Simple Activityのみを抽出
-        simple_indices = []
-        simple_activities = []
-
-        for i, act in enumerate(activity_ids):
-            level = self.atlas.get_activity_level(act)
-            if level == 1:  # Simple
-                simple_indices.append(i)
-                simple_activities.append(act)
-
-        if len(simple_indices) < 2:
-            return embeddings.sum() * 0.0
-
-        # Simple Activityのみのサブセット
-        indices_tensor = torch.tensor(simple_indices, device=device)
-        simple_embeddings = embeddings[indices_tensor]
-        simple_ds_labels = dataset_labels[indices_tensor]
-
+        # 全Activity対象（Levelフィルタなし）
         # Activity名をIDに変換
-        unique_acts = list(set(simple_activities))
+        unique_acts = list(set(activity_ids))
         act_to_id = {a: i for i, a in enumerate(unique_acts)}
-        simple_act_labels = torch.tensor(
-            [act_to_id[a] for a in simple_activities],
+        activity_labels = torch.tensor(
+            [act_to_id[a] for a in activity_ids],
             dtype=torch.long,
             device=device,
         )
 
-        return self.contrastive(simple_embeddings, simple_act_labels, simple_ds_labels)
+        return self.contrastive(embeddings, activity_labels, dataset_labels)
 
 
 class PrototypeContrastiveLoss(nn.Module):
@@ -449,15 +433,14 @@ class PrototypeContrastiveLoss(nn.Module):
 
 class AtomicMotionLoss(nn.Module):
     """
-    Atomic Motion (Level 2) のContrastive Loss
+    Atomic Motion (Level 2) のContrastive Loss（PiCO）
 
-    クロスデータセットで学習。Atomic Motion共有度によるsoft positive重みを使用。
-    Body Part別にPrototypeを学習（PiCO）。
+    クロスデータセットで学習。Body Part別にPrototype（=Atomic Motion）を学習。
 
     核心的アイデア:
-    - 同じAtomic Motionを持つActivity同士をsoft positiveとして扱う
-    - walkingとwalking_treadmillは同じAtomic → 強いpositive
-    - walkingとrunningは一部共有 → 弱いpositive
+    - PiCOでサンプル → Atomic Motion（Prototype）への割り当てを推定
+    - 同じAtomic Motionに割り当てられたサンプル同士をpositive
+    - Activity間の類似度ではなく、サンプル単位の割り当て結果でpositive判定
     """
 
     def __init__(
@@ -470,50 +453,21 @@ class AtomicMotionLoss(nn.Module):
         self.atlas = atlas
         self.prototypes = prototypes
         self.temperature = temperature
-        self.prototype_loss = PrototypeContrastiveLoss(temperature)
-
-        # Atomic Motion → ID マッピング
-        self.atomic_to_id = atlas.get_atomic_motion_to_id()
-
-    def _compute_atomic_sharing_weights(
-        self,
-        activity_ids: List[str],
-        body_part: str,
-        device: torch.device,
-    ) -> torch.Tensor:
-        """
-        Activity間のAtomic共有度行列を計算
-
-        Returns:
-            (batch, batch) のsoft positive重み行列
-        """
-        batch_size = len(activity_ids)
-        weights = torch.zeros(batch_size, batch_size, device=device)
-
-        for i in range(batch_size):
-            for j in range(batch_size):
-                if i == j:
-                    weights[i, j] = 1.0
-                else:
-                    weights[i, j] = self.atlas.get_atomic_sharing_weight(
-                        activity_ids[i], activity_ids[j], body_part
-                    )
-
-        return weights
 
     def forward(
         self,
         embeddings: torch.Tensor,
-        activity_ids: List[str],
         body_parts: List[str],
-        dataset_ids: List[str],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
+        PiCOによるAtomic Motion Loss
+
+        サンプル → Prototype（Atomic Motion）への割り当てを推定し、
+        同じPrototypeに割り当てられたサンプル同士をpositiveとしてContrastive Learning
+
         Args:
             embeddings: (batch, embed_dim)
-            activity_ids: Activity名のリスト
             body_parts: Body Part名のリスト
-            dataset_ids: データセット名のリスト
 
         Returns:
             (total_loss, {"atomic_wrist": loss, "atomic_hip": loss, ...})
@@ -535,68 +489,32 @@ class AtomicMotionLoss(nn.Module):
 
             indices_tensor = torch.tensor(indices, device=device)
             bp_embeddings = embeddings[indices_tensor]
-            bp_activities = [activity_ids[i] for i in indices]
-            bp_datasets = [dataset_ids[i] for i in indices]
 
-            # Atomic共有度に基づくsoft positive重み
-            atomic_weights = self._compute_atomic_sharing_weights(
-                bp_activities, bp, device
-            )
-
-            # 候補Prototype IDを取得（各サンプル）
-            candidate_ids_list = []
-            has_any_candidates = False
-            for idx in indices:
-                candidates = self._get_candidate_prototype_ids(
-                    dataset_ids[idx],
-                    activity_ids[idx],
-                    body_parts[idx],
-                    device=device,
-                )
-                candidate_ids_list.append(candidates)
-                if candidates is not None:
-                    has_any_candidates = True
-
-            # 全サンプルの候補がNoneの場合、candidate_ids=Noneで全Prototypeを候補に
-            if has_any_candidates:
-                # 有効な候補がある場合のみスタック
-                # None要素は最大候補数で埋める
-                max_cands = 10
-                filled_list = []
-                for cand in candidate_ids_list:
-                    if cand is None:
-                        # 全Prototypeを候補とするため-1で埋める
-                        # ただし実際には全Prototypeが候補になるよう処理が必要
-                        filled_list.append(torch.tensor([-1] * max_cands, dtype=torch.long, device=device))
-                    else:
-                        filled_list.append(cand)
-                candidate_ids = torch.stack(filled_list)
-            else:
-                candidate_ids = None
-
-            # Soft割り当て
+            # PiCO: サンプル → Prototype（Atomic Motion）へのSoft割り当て
+            # candidate_ids=None で全Prototypeを候補とする
             soft_assignments = self.prototypes.get_soft_assignments(
                 bp_embeddings,
                 bp,
-                candidate_ids=candidate_ids,
+                candidate_ids=None,  # 全Prototypeが候補
                 temperature=self.temperature,
             )
 
-            # Prototype類似度とAtomic共有度を組み合わせたsoft positive
-            prototype_weights = torch.mm(soft_assignments, soft_assignments.t())
-            combined_weights = torch.max(prototype_weights, atomic_weights)
+            # 同じPrototypeに割り当てられたサンプル同士がpositive
+            # soft_assignments: (batch, num_prototypes)
+            # positive_weights[i,j] = Σ_k soft_assignments[i,k] * soft_assignments[j,k]
+            positive_weights = torch.mm(soft_assignments, soft_assignments.t())
 
             # 自分自身を除外
             batch_size = len(indices)
             self_mask = torch.eye(batch_size, device=device)
-            combined_weights = combined_weights * (1 - self_mask)
+            positive_weights = positive_weights * (1 - self_mask)
 
             # Weighted Contrastive Loss
             bp_embeddings_norm = F.normalize(bp_embeddings, dim=1)
             sim_matrix = torch.mm(bp_embeddings_norm, bp_embeddings_norm.t()) / self.temperature
 
             # 重みがない場合はスキップ
-            weight_sum = combined_weights.sum(dim=1)
+            weight_sum = positive_weights.sum(dim=1)
             valid_samples = weight_sum > 0
 
             if not valid_samples.any():
@@ -611,7 +529,7 @@ class AtomicMotionLoss(nn.Module):
                 exp_sim = torch.exp(sim_matrix)
                 log_prob = sim_matrix - torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-8)
 
-                weighted_log_prob = combined_weights * log_prob
+                weighted_log_prob = positive_weights * log_prob
                 loss = -weighted_log_prob.sum(dim=1) / (weight_sum + 1e-8)
                 loss = loss[valid_samples].mean()
 
@@ -626,63 +544,18 @@ class AtomicMotionLoss(nn.Module):
         loss_dict["atomic_total"] = total_loss
         return total_loss, loss_dict
 
-    def _get_candidate_prototype_ids(
-        self,
-        dataset: str,
-        activity: str,
-        body_part: str,
-        max_candidates: int = 10,
-        device: torch.device = None,
-    ) -> Optional[torch.Tensor]:
-        """
-        候補Prototype IDを取得
-
-        atomic_motions.jsonから直接取得（データセット非依存）。
-        候補が見つからない場合はNoneを返す（全Prototypeを候補とする）。
-        """
-        # Body Part正規化
-        normalized_bp = self.atlas._normalize_body_part(body_part)
-
-        # atomic_motions.jsonから直接取得
-        atomics = self.atlas.get_activity_atomic_signature(activity, normalized_bp)
-
-        if not atomics:
-            # Atlasに登録されていないActivityの場合、Noneを返す
-            # → get_soft_assignmentsでcandidate_ids=Noneなら全Prototypeが候補
-            return None
-
-        # Atomic Motion名をIDに変換
-        if normalized_bp not in self.atomic_to_id:
-            return None
-
-        bp_mapping = self.atomic_to_id[normalized_bp]
-        candidates = [bp_mapping[a] for a in atomics if a in bp_mapping]
-
-        if not candidates:
-            return None
-
-        if len(candidates) < max_candidates:
-            candidates = candidates + [-1] * (max_candidates - len(candidates))
-        else:
-            candidates = candidates[:max_candidates]
-
-        tensor = torch.tensor(candidates, dtype=torch.long)
-        if device is not None:
-            tensor = tensor.to(device)
-        return tensor
-
 
 class HierarchicalSSLLoss(nn.Module):
     """
     3階層SSL損失
 
-    L_total = λ0 * L_complex + λ1 * L_simple + λ2 * L_atomic
+    L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 
-    - L_complex: Complex Activity (level=0) 内のContrastive Loss（データセット内）
-    - L_simple: Simple Activity (level=1) 内のContrastive Loss（データセット内）
-    - L_atomic: Body Part別Prototype学習（クロスデータセット、Atomic共有でsoft positive）
+    - L_atomic (重み大): 同じAtomic Motion（Prototype）→ positive（PiCOで推定、クロスデータセット）
+    - L_activity (重み中): 同じActivity + 同じデータセット → positive
+    - L_complex (重み小): 同じComplex Activity + 同じデータセット → positive
 
-    デフォルト重み: λ0=0.1, λ1=0.3, λ2=0.6（階層が深いほど重視）
+    デフォルト重み: λ0=0.1, λ1=0.3, λ2=0.6
     """
 
     def __init__(
@@ -692,10 +565,10 @@ class HierarchicalSSLLoss(nn.Module):
         prototype_dim: int = 128,
         temperature: float = 0.1,
         lambda_complex: float = 0.1,
-        lambda_simple: float = 0.3,
+        lambda_activity: float = 0.3,
         lambda_atomic: float = 0.6,
         # 後方互換性のため旧パラメータも受け付ける
-        lambda_activity: float = None,
+        lambda_simple: float = None,
         lambda_prototype: float = None,
     ):
         """
@@ -704,9 +577,9 @@ class HierarchicalSSLLoss(nn.Module):
             embed_dim: エンコーダー出力次元
             prototype_dim: Prototype空間の次元
             temperature: Contrastive Loss温度
-            lambda_complex: Complex Activity Loss重み (λ0)
-            lambda_simple: Simple Activity Loss重み (λ1)
-            lambda_atomic: Atomic Motion Loss重み (λ2)
+            lambda_complex: Complex Activity Loss重み (λ0) - 小
+            lambda_activity: Activity Loss重み (λ1) - 中
+            lambda_atomic: Atomic Motion Loss重み (λ2) - 大
         """
         super().__init__()
 
@@ -735,20 +608,19 @@ class HierarchicalSSLLoss(nn.Module):
         self.atomic_to_id = self.atlas.get_atomic_motion_to_id()
 
         # 3階層Loss関数
-        self.complex_loss = ComplexActivityLoss(self.atlas, temperature=temperature)
-        self.simple_loss = SimpleActivityLoss(self.atlas, temperature=temperature)
-        self.atomic_loss = AtomicMotionLoss(self.atlas, self.prototypes, temperature=temperature)
+        self.complex_loss_fn = ComplexActivityLoss(self.atlas, temperature=temperature)
+        self.activity_loss_fn = SimpleActivityLoss(self.atlas, temperature=temperature)
+        self.atomic_loss_fn = AtomicMotionLoss(self.atlas, self.prototypes, temperature=temperature)
 
         # 重み（後方互換性: 旧パラメータが指定されていたら変換）
-        if lambda_activity is not None and lambda_prototype is not None:
-            # 旧形式: activity -> complex+simple, prototype -> atomic
-            self.lambda_complex = lambda_activity * 0.25
-            self.lambda_simple = lambda_activity * 0.75
-            self.lambda_atomic = lambda_prototype
+        if lambda_simple is not None:
+            # 旧形式: lambda_simple -> lambda_activity
+            self.lambda_activity = lambda_simple
         else:
-            self.lambda_complex = lambda_complex
-            self.lambda_simple = lambda_simple
-            self.lambda_atomic = lambda_atomic
+            self.lambda_activity = lambda_activity
+
+        self.lambda_complex = lambda_complex
+        self.lambda_atomic = lambda_atomic
 
         self.temperature = temperature
 
@@ -785,25 +657,23 @@ class HierarchicalSSLLoss(nn.Module):
 
         loss_dict = {}
 
-        # 1. Complex Activity Loss (L_complex) - データセット内
-        loss_complex = self.complex_loss(embeddings, activity_ids, dataset_labels)
+        # 1. Complex Activity Loss (L_complex) - 同じComplex Activity + 同じデータセット
+        loss_complex = self.complex_loss_fn(embeddings, activity_ids, dataset_labels)
         loss_dict["complex"] = loss_complex
 
-        # 2. Simple Activity Loss (L_simple) - データセット内
-        loss_simple = self.simple_loss(embeddings, activity_ids, dataset_labels)
-        loss_dict["simple"] = loss_simple
+        # 2. Activity Loss (L_activity) - 同じActivity + 同じデータセット
+        loss_activity = self.activity_loss_fn(embeddings, activity_ids, dataset_labels)
+        loss_dict["activity"] = loss_activity
 
-        # 3. Atomic Motion Loss (L_atomic) - クロスデータセット
-        loss_atomic, atomic_details = self.atomic_loss(
-            embeddings, activity_ids, body_parts, dataset_ids
-        )
+        # 3. Atomic Motion Loss (L_atomic) - PiCOで同じPrototype → positive
+        loss_atomic, atomic_details = self.atomic_loss_fn(embeddings, body_parts)
         loss_dict["atomic"] = loss_atomic
         loss_dict.update(atomic_details)
 
-        # Total Loss: L_total = λ0 * L_complex + λ1 * L_simple + λ2 * L_atomic
+        # Total Loss: L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
         total_loss = (
             self.lambda_complex * loss_complex +
-            self.lambda_simple * loss_simple +
+            self.lambda_activity * loss_activity +
             self.lambda_atomic * loss_atomic
         )
         loss_dict["total"] = total_loss
@@ -873,7 +743,7 @@ if __name__ == "__main__":
         embed_dim=embed_dim,
     )
 
-    print(f"Lambda values: complex={loss_fn.lambda_complex}, simple={loss_fn.lambda_simple}, atomic={loss_fn.lambda_atomic}")
+    print(f"Lambda values: complex={loss_fn.lambda_complex}, activity={loss_fn.lambda_activity}, atomic={loss_fn.lambda_atomic}")
     print(f"Body parts in batch: {set(body_parts)}")
 
     # Forward
@@ -887,7 +757,7 @@ if __name__ == "__main__":
     print(f"\nTotal Loss: {total_loss.item():.4f}")
     print("\n3-Level Loss Breakdown:")
     print(f"  L_complex (λ0={loss_fn.lambda_complex}): {loss_dict['complex'].item():.4f}")
-    print(f"  L_simple (λ1={loss_fn.lambda_simple}): {loss_dict['simple'].item():.4f}")
+    print(f"  L_activity (λ1={loss_fn.lambda_activity}): {loss_dict['activity'].item():.4f}")
     print(f"  L_atomic (λ2={loss_fn.lambda_atomic}): {loss_dict['atomic'].item():.4f}")
 
     print("\nAtomic Loss Details (per body part):")

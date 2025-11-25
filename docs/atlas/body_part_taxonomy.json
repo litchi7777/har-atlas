@@ -221,6 +221,12 @@
     },
     "sbrhapt": {
       "Waist": "hip"
+    },
+    "openpack": {
+      "RightWrist": "wrist",
+      "LeftWrist": "wrist",
+      "RightUpperArm": "forearm",
+      "LeftUpperArm": "forearm"
     }
   },
 

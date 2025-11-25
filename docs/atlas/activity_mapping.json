@@ -1745,5 +1745,75 @@
         }
       }
     }
+  },
+
+  "openpack": {
+    "body_parts": ["wrist", "forearm"],
+    "note": "Industrial packaging operations - wrist/forearm sensors only",
+    "activities": {
+      "picking": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W09_lift_lower"],
+          "forearm": ["W07_reach", "W09_lift_lower"]
+        }
+      },
+      "relocate_item_label": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W06_flex_extend"],
+          "forearm": ["W07_reach"]
+        }
+      },
+      "assemble_box": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W06_flex_extend", "W08_push_pull"],
+          "forearm": ["W08_push_pull"]
+        }
+      },
+      "insert_items": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W09_lift_lower", "W08_push_pull"],
+          "forearm": ["W09_lift_lower"]
+        }
+      },
+      "close_box": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W08_push_pull", "W06_flex_extend"],
+          "forearm": ["W08_push_pull"]
+        }
+      },
+      "attach_box_label": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W08_push_pull"],
+          "forearm": ["W07_reach"]
+        }
+      },
+      "scan_label": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W12_grip_stable"],
+          "forearm": ["W07_reach"]
+        }
+      },
+      "attach_shipping_label": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W08_push_pull"],
+          "forearm": ["W07_reach"]
+        }
+      },
+      "put_on_back_table": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W09_lift_lower", "W07_reach"],
+          "forearm": ["W09_lift_lower", "W07_reach"]
+        }
+      }
+    }
   }
 }

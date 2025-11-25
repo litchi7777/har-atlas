@@ -522,6 +522,142 @@ class AtlasLoader:
         all_activities = sorted(self.get_all_canonical_activities())
         return {act: idx for idx, act in enumerate(all_activities)}
 
+    def get_activity_level(self, activity: str) -> int:
+        """
+        ActivityのLevel (0=Complex, 1=Simple) を取得
+
+        atomic_motions.jsonのactivitiesセクションから読み込む。
+
+        Args:
+            activity: Activity名
+
+        Returns:
+            0 (Complex) or 1 (Simple)。見つからない場合は1 (Simple)をデフォルトとする
+        """
+        if not self.atomic_motions or "activities" not in self.atomic_motions:
+            return 1  # Default to Simple
+
+        activity_lower = activity.lower().replace(" ", "_").replace("-", "_")
+        activities = self.atomic_motions["activities"]
+
+        if activity_lower in activities:
+            return activities[activity_lower].get("level", 1)
+
+        return 1  # Default to Simple
+
+    def get_complex_activities(self) -> List[str]:
+        """
+        Complex Activity (level=0) のリストを取得
+
+        Returns:
+            Complex Activityのリスト (例: ["vacuum_cleaning", "cooking", ...])
+        """
+        if not self.atomic_motions or "activities" not in self.atomic_motions:
+            return []
+
+        return [
+            name for name, info in self.atomic_motions["activities"].items()
+            if info.get("level", 1) == 0
+        ]
+
+    def get_simple_activities(self) -> List[str]:
+        """
+        Simple Activity (level=1) のリストを取得
+
+        Returns:
+            Simple Activityのリスト (例: ["walking", "running", ...])
+        """
+        if not self.atomic_motions or "activities" not in self.atomic_motions:
+            return []
+
+        return [
+            name for name, info in self.atomic_motions["activities"].items()
+            if info.get("level", 1) == 1
+        ]
+
+    def get_atomic_sharing_weight(
+        self,
+        activity1: str,
+        activity2: str,
+        body_part: str
+    ) -> float:
+        """
+        2つのActivityのAtomic Motion共有度を計算（soft positive用）
+
+        共有度 = |共有Atomic| / max(|Activity1|, |Activity2|)
+
+        **重要**: Activity名の一致ではなく、純粋にAtomic Motionの共有のみで判断。
+        同じActivity名でも、Atlasに定義されたAtomic Motionを比較する。
+
+        Args:
+            activity1: Activity名1
+            activity2: Activity名2
+            body_part: Body Part名
+
+        Returns:
+            0.0〜1.0の共有度（Atomic Motionが完全一致なら1.0）
+        """
+        # atomic_motions.jsonから直接Atomic Motionを取得
+        if not self.atomic_motions or "activities" not in self.atomic_motions:
+            return 0.0
+
+        activities = self.atomic_motions["activities"]
+        act1_lower = activity1.lower().replace(" ", "_").replace("-", "_")
+        act2_lower = activity2.lower().replace(" ", "_").replace("-", "_")
+
+        # Body Partを正規化
+        bp_normalized = self._normalize_body_part(body_part)
+
+        # 各ActivityのAtomic Motionsを取得
+        def get_atomics(act_name: str) -> Set[str]:
+            if act_name not in activities:
+                return set()
+            act_info = activities[act_name]
+            atomics = act_info.get("atomic_motions", {})
+            return set(atomics.get(bp_normalized, []))
+
+        atomics1 = get_atomics(act1_lower)
+        atomics2 = get_atomics(act2_lower)
+
+        # どちらかがAtlasに未登録の場合は共有度0
+        if not atomics1 or not atomics2:
+            return 0.0
+
+        # 共有度計算（純粋にAtomic Motionの集合演算）
+        shared = atomics1 & atomics2
+        max_count = max(len(atomics1), len(atomics2))
+
+        return len(shared) / max_count if max_count > 0 else 0.0
+
+    def get_activity_atomic_signature(
+        self,
+        activity: str,
+        body_part: str
+    ) -> Set[str]:
+        """
+        ActivityのAtomic Motionシグネチャを取得（Body Part別）
+
+        Args:
+            activity: Activity名
+            body_part: Body Part名
+
+        Returns:
+            Atomic MotionのSet
+        """
+        if not self.atomic_motions or "activities" not in self.atomic_motions:
+            return set()
+
+        activities = self.atomic_motions["activities"]
+        act_lower = activity.lower().replace(" ", "_").replace("-", "_")
+        bp_normalized = self._normalize_body_part(body_part)
+
+        if act_lower not in activities:
+            return set()
+
+        act_info = activities[act_lower]
+        atomics = act_info.get("atomic_motions", {})
+        return set(atomics.get(bp_normalized, []))
+
 
 # 便利関数
 def load_atlas(atlas_path: str = "docs/atlas/activity_mapping.json") -> AtlasLoader:

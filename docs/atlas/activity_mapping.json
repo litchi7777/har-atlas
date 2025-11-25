@@ -752,38 +752,150 @@
 
   "paal": {
     "body_parts": ["wrist"],
+    "note": "24 ADL activities with wrist-worn accelerometer",
     "activities": {
-      "walking": {
+      "blow_nose": {
         "level": 1,
         "atomic_motions": {
-          "wrist": ["W01_swing_slow"]
+          "wrist": ["W07_reach", "W06_flex_extend"]
         }
       },
-      "car": {
-        "level": 0,
-        "children": ["sitting"],
-        "atomic_motions": {
-          "wrist": ["W14_stationary", "W12_grip_stable"]
-        }
-      },
-      "still": {
+      "brush_hair": {
         "level": 1,
         "atomic_motions": {
-          "wrist": ["W14_stationary"]
+          "wrist": ["W05_wipe_circular", "W01_swing_slow"]
         }
       },
-      "train": {
-        "level": 0,
-        "children": ["sitting", "standing"],
+      "brush_teeth": {
+        "level": 1,
         "atomic_motions": {
-          "wrist": ["W14_stationary", "W12_grip_stable"]
+          "wrist": ["W04_wipe_linear"]
         }
       },
-      "bus": {
-        "level": 0,
-        "children": ["sitting", "standing"],
+      "drink_water": {
+        "level": 1,
         "atomic_motions": {
-          "wrist": ["W14_stationary", "W12_grip_stable"]
+          "wrist": ["W07_reach", "W09_lift_lower"]
+        }
+      },
+      "dusting": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W05_wipe_circular", "W07_reach"]
+        }
+      },
+      "eat_meal": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W06_flex_extend"]
+        }
+      },
+      "ironing": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W04_wipe_linear", "W08_push_pull"]
+        }
+      },
+      "open_a_bottle": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W11_twist", "W12_grip_stable"]
+        }
+      },
+      "open_a_box": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W08_push_pull", "W12_grip_stable"]
+        }
+      },
+      "phone_call": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W12_grip_stable", "W14_stationary"]
+        }
+      },
+      "put_on_a_jacket": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W08_push_pull"]
+        }
+      },
+      "put_on_a_shoe": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W09_lift_lower"]
+        }
+      },
+      "put_on_glasses": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W12_grip_stable"]
+        }
+      },
+      "salute": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W13_gesture"]
+        }
+      },
+      "sit_down": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W09_lift_lower", "W14_stationary"]
+        }
+      },
+      "sneeze_cough": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W06_flex_extend"]
+        }
+      },
+      "stand_up": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W09_lift_lower", "W08_push_pull"]
+        }
+      },
+      "take_off_a_jacket": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W08_push_pull"]
+        }
+      },
+      "take_off_a_shoe": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W09_lift_lower"]
+        }
+      },
+      "take_off_glasses": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_reach", "W12_grip_stable"]
+        }
+      },
+      "type_on_a_keyboard": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W10_tap_press", "W06_flex_extend"]
+        }
+      },
+      "washing_dishes": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W05_wipe_circular", "W07_reach"]
+        }
+      },
+      "washing_hands": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W05_wipe_circular", "W04_wipe_linear"]
+        }
+      },
+      "writing": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W04_wipe_linear", "W12_grip_stable"]
         }
       }
     }
@@ -886,83 +998,6 @@
     }
   },
 
-  "lara": {
-    "body_parts": ["head", "wrist", "leg"],
-    "activities": {
-      "walking": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD05_bounce_gait", "HD06_sway_gait"],
-          "wrist": ["W01_swing_slow"],
-          "leg": ["L01_step_walk"]
-        }
-      },
-      "sitting": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD07_stationary"],
-          "wrist": ["W14_stationary"],
-          "leg": ["L17_stationary"]
-        }
-      },
-      "standing": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD07_stationary"],
-          "wrist": ["W14_stationary"],
-          "leg": ["L14_weight_shift", "L17_stationary"]
-        }
-      },
-      "lying": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD07_stationary"],
-          "wrist": ["W14_stationary"],
-          "leg": ["L17_stationary"]
-        }
-      },
-      "running": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD05_bounce_gait", "HD06_sway_gait"],
-          "wrist": ["W02_swing_fast"],
-          "leg": ["L02_step_run"]
-        }
-      },
-      "kneeling": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD07_stationary"],
-          "wrist": ["W14_stationary"],
-          "leg": ["L11_knee_flex_deep", "L17_stationary"]
-        }
-      },
-      "crouching": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD07_stationary"],
-          "wrist": ["W13_gesture"],
-          "leg": ["L11_knee_flex_deep"]
-        }
-      },
-      "ascending_stairs": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD05_bounce_gait"],
-          "wrist": ["W01_swing_slow"],
-          "leg": ["L05_step_ascend"]
-        }
-      },
-      "descending_stairs": {
-        "level": 1,
-        "atomic_motions": {
-          "head": ["HD05_bounce_gait"],
-          "wrist": ["W01_swing_slow"],
-          "leg": ["L06_step_descend"]
-        }
-      }
-    }
-  },
 
   "imsb": {
     "body_parts": ["head", "wrist"],
@@ -1143,43 +1178,6 @@
     }
   },
 
-  "opportunity": {
-    "body_parts": ["chest", "wrist", "leg"],
-    "activities": {
-      "stand": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": ["W14_stationary"],
-          "chest": ["C11_stationary"],
-          "leg": ["L14_weight_shift", "L17_stationary"]
-        }
-      },
-      "walk": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": ["W01_swing_slow"],
-          "chest": ["C01_rotation_gait", "C03_bounce_walk"],
-          "leg": ["L01_step_walk"]
-        }
-      },
-      "sit": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": ["W14_stationary"],
-          "chest": ["C11_stationary"],
-          "leg": ["L17_stationary"]
-        }
-      },
-      "lie": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": ["W14_stationary"],
-          "chest": ["C11_stationary"],
-          "leg": ["L17_stationary"]
-        }
-      }
-    }
-  },
 
   "motionsense": {
     "body_parts": ["hip"],
@@ -1450,44 +1448,6 @@
     }
   },
 
-  "tmd": {
-    "body_parts": ["hip"],
-    "activities": {
-      "walking": {
-        "level": 1,
-        "atomic_motions": {
-          "hip": ["H01_gait_slow", "H04_sway_lateral"]
-        }
-      },
-      "car": {
-        "level": 0,
-        "children": ["sitting"],
-        "atomic_motions": {
-          "hip": ["H15_vibration_vehicle", "H16_stationary"]
-        }
-      },
-      "still": {
-        "level": 1,
-        "atomic_motions": {
-          "hip": ["H16_stationary"]
-        }
-      },
-      "train": {
-        "level": 0,
-        "children": ["sitting", "standing"],
-        "atomic_motions": {
-          "hip": ["H15_vibration_vehicle", "H05_sway_stand"]
-        }
-      },
-      "bus": {
-        "level": 0,
-        "children": ["sitting", "standing"],
-        "atomic_motions": {
-          "hip": ["H15_vibration_vehicle", "H05_sway_stand"]
-        }
-      }
-    }
-  },
 
   "sbrhapt": {
     "body_parts": ["hip"],
@@ -1812,6 +1772,258 @@
         "atomic_motions": {
           "wrist": ["W09_lift_lower", "W07_reach"],
           "forearm": ["W09_lift_lower", "W07_reach"]
+        }
+      }
+    }
+  },
+
+  "lara": {
+    "body_parts": ["forearm", "leg", "head"],
+    "note": "Logistic warehouse activities - 8 classes with semantic attributes",
+    "activities": {
+      "standing": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W14_stationary"],
+          "leg": ["L14_weight_shift", "L17_stationary"],
+          "head": ["H07_stationary"]
+        }
+      },
+      "walking": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W01_swing_slow"],
+          "leg": ["L01_step_walk"],
+          "head": ["H05_bounce_gait"]
+        }
+      },
+      "cart": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W08_push_pull", "W12_grip_stable"],
+          "leg": ["L01_step_walk"],
+          "head": ["H05_bounce_gait"]
+        }
+      },
+      "handling_centered": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W09_lift_lower", "W06_flex_extend"],
+          "leg": ["L17_stationary"],
+          "head": ["H07_stationary"]
+        }
+      },
+      "handling_bent": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W09_lift_lower"],
+          "leg": ["L11_knee_flex_deep", "L17_stationary"],
+          "head": ["H03_tilt"]
+        }
+      },
+      "handling_lowered": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W09_lift_lower"],
+          "leg": ["L11_knee_flex_deep", "L12_squat"],
+          "head": ["H03_tilt"]
+        }
+      },
+      "synchronization": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W06_flex_extend"],
+          "leg": ["L01_step_walk", "L14_weight_shift"],
+          "head": ["H04_rotation"]
+        }
+      },
+      "none": {
+        "level": 1,
+        "note": "Transition or undefined activity",
+        "atomic_motions": {
+          "forearm": ["W14_stationary"],
+          "leg": ["L17_stationary"],
+          "head": ["H07_stationary"]
+        }
+      }
+    }
+  },
+
+  "opportunity": {
+    "body_parts": ["chest", "forearm", "ankle"],
+    "note": "17 mid-level gestures (kitchen activities) - BACK/RUA/RLA/LUA/LLA/L_SHOE/R_SHOE sensors",
+    "activities": {
+      "open_door_1": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C04_rotation_turn"],
+          "ankle": ["L01_step_walk"]
+        }
+      },
+      "open_door_2": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C04_rotation_turn"],
+          "ankle": ["L01_step_walk"]
+        }
+      },
+      "close_door_1": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C04_rotation_turn"],
+          "ankle": ["L01_step_walk"]
+        }
+      },
+      "close_door_2": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C04_rotation_turn"],
+          "ankle": ["L01_step_walk"]
+        }
+      },
+      "open_fridge": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C05_lean_transition"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "close_fridge": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C05_lean_transition"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "open_dishwasher": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C05_lean_transition"],
+          "ankle": ["L11_knee_flex_deep"]
+        }
+      },
+      "close_dishwasher": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C05_lean_transition"],
+          "ankle": ["L11_knee_flex_deep"]
+        }
+      },
+      "open_drawer_1": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "close_drawer_1": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "open_drawer_2": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "close_drawer_2": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "open_drawer_3": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull", "W12_grip_stable"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "close_drawer_3": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W08_push_pull"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "clean_table": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W05_wipe_circular", "W08_push_pull"],
+          "chest": ["C05_lean_transition"],
+          "ankle": ["L14_weight_shift"]
+        }
+      },
+      "drink_from_cup": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W09_lift_lower", "W12_grip_stable"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      },
+      "toggle_switch": {
+        "level": 1,
+        "atomic_motions": {
+          "forearm": ["W07_reach", "W10_tap_press"],
+          "chest": ["C11_stationary"],
+          "ankle": ["L17_stationary"]
+        }
+      }
+    }
+  },
+
+  "tmd": {
+    "body_parts": ["hip"],
+    "note": "Transportation mode detection - 5 modes (Walking, Car, Still, Train, Bus)",
+    "activities": {
+      "walking": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H01_gait_slow", "H07_vertical_osc", "H08_lateral_sway"]
+        }
+      },
+      "car": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H12_vibration_low", "H13_bump_impact"]
+        }
+      },
+      "still": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H16_stationary"]
+        }
+      },
+      "train": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H12_vibration_low", "H14_sway_smooth"]
+        }
+      },
+      "bus": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H12_vibration_low", "H13_bump_impact", "H14_sway_smooth"]
         }
       }
     }

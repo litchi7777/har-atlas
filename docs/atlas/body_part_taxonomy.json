@@ -227,6 +227,25 @@
       "LeftWrist": "wrist",
       "RightUpperArm": "forearm",
       "LeftUpperArm": "forearm"
+    },
+    "lara": {
+      "LeftArm": "forearm",
+      "RightArm": "forearm",
+      "LeftLeg": "leg",
+      "RightLeg": "leg",
+      "Neck": "head"
+    },
+    "opportunity": {
+      "BACK": "chest",
+      "RUA": "forearm",
+      "RLA": "forearm",
+      "LUA": "forearm",
+      "LLA": "forearm",
+      "L_SHOE": "ankle",
+      "R_SHOE": "ankle"
+    },
+    "tmd": {
+      "Smartphone": "hip"
     }
   },
 

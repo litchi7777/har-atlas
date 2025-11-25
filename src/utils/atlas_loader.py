@@ -145,13 +145,34 @@ class AtlasLoader:
         if body_part_lower in self.NORMALIZED_BODY_PARTS:
             return body_part_lower
 
-        # マッピング
+        # マッピング（様々なセンサー位置名を統一カテゴリに）
         mapping = {
+            # Leg variants
             "thigh": "leg",
             "calf": "leg",
             "ankle": "leg",
+            "rightleg": "leg",
+            "leftleg": "leg",
+            "rightthigh": "leg",
+            "leftthigh": "leg",
+            "lowerback": "hip",  # Lower back is close to hip
+            # Wrist/Arm variants
             "forearm": "wrist",
+            "rightarm": "wrist",
+            "leftarm": "wrist",
+            "rightwrist": "wrist",
+            "leftwrist": "wrist",
+            "leftankle": "leg",
+            "hand": "wrist",
+            "watch": "wrist",
+            # Chest/Torso variants
+            "torso": "chest",
+            "back": "chest",
+            "waist": "hip",
+            # Head
             "neck": "head",
+            # Phone typically in pocket = hip
+            "phone": "hip",
         }
         return mapping.get(body_part_lower, body_part_lower)
 

@@ -1,0 +1,73 @@
+# Hierarchical SSL Pre-training Configuration
+# PiCO inspired hierarchical contrastive learning
+
+# 実験設定
+experiment_dir: experiments/hierarchical
+
+# Atlas設定
+atlas_path: docs/atlas/activity_mapping.json
+
+# データ設定
+data:
+  data_root: har-unified-dataset/data/processed
+  # データセットとセンサー位置のペア
+  # 各データセットからAtlasに登録されているセンサー位置を使用
+  dataset_location_pairs:
+    # DSADS: 5 body locations
+    - [dsads, Torso]
+    - [dsads, RightArm]
+    - [dsads, LeftArm]
+    - [dsads, RightLeg]
+    - [dsads, LeftLeg]
+    # PAMAP2: 3 body locations
+    - [pamap2, chest]
+    - [pamap2, hand]
+    - [pamap2, ankle]
+    # MHEALTH: 3 body locations
+    - [mhealth, Chest]
+    - [mhealth, LeftAnkle]
+    - [mhealth, RightWrist]
+    # HAR70PLUS: 2 body locations
+    - [har70plus, LowerBack]
+    - [har70plus, RightThigh]
+    # HARTH: 2 body locations
+    - [harth, LowerBack]
+    - [harth, RightThigh]
+    # REALWORLD: multiple locations
+    - [realworld, Chest]
+    - [realworld, Forearm]
+    - [realworld, Thigh]
+    - [realworld, Waist]
+    # USCHAD: 1 location
+    - [uschad, Hip]
+    # WISDM: 2 locations (Phone=hip, Watch=wrist)
+    - [wisdm, Phone]
+    - [wisdm, Watch]
+
+# モデル設定
+model:
+  in_channels: 3  # 3軸加速度
+  sequence_length: 150  # ウィンドウサイズ（30Hz × 5秒）- Resnetの最小要件
+  embed_dim: 512  # エンコーダー出力次元
+
+# Loss設定
+loss:
+  prototype_dim: 128  # Prototype空間の次元
+  temperature: 0.1  # Contrastive学習の温度
+  lambda_activity: 0.5  # Activity Loss重み
+  lambda_prototype: 0.5  # Prototype Loss重み
+
+# 訓練設定
+training:
+  num_epochs: 100
+  batch_size: 8  # ソース数（各ソースから4サンプル抽出）
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: adam
+  scheduler: cosine
+  save_every: 10  # チェックポイント保存間隔
+
+# W&B設定（オプション）
+wandb:
+  enabled: false
+  project: har-hierarchical

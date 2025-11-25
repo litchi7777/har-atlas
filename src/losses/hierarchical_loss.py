@@ -194,7 +194,8 @@ class ActivityContrastiveLoss(nn.Module):
         device = embeddings.device
 
         if batch_size < 2:
-            return torch.tensor(0.0, device=device)
+            # embeddingsの0倍を返して計算グラフを維持
+            return (embeddings.sum() * 0.0)
 
         # 正規化
         embeddings = F.normalize(embeddings, dim=1)
@@ -215,7 +216,8 @@ class ActivityContrastiveLoss(nn.Module):
         valid_samples = num_positives > 0
 
         if not valid_samples.any():
-            return torch.tensor(0.0, device=device)
+            # embeddingsの0倍を返して計算グラフを維持
+            return (embeddings.sum() * 0.0)
 
         # 対角成分を大きな負値でマスク（-infではなく）
         logits_max, _ = sim_matrix.max(dim=1, keepdim=True)
@@ -265,7 +267,8 @@ class PrototypeContrastiveLoss(nn.Module):
         device = embeddings.device
 
         if batch_size < 2:
-            return torch.tensor(0.0, device=device)
+            # embeddingsの0倍を返して計算グラフを維持
+            return (embeddings.sum() * 0.0)
 
         # 正規化
         embeddings = F.normalize(embeddings, dim=1)
@@ -293,7 +296,8 @@ class PrototypeContrastiveLoss(nn.Module):
         valid_samples = weight_sum > 0
 
         if not valid_samples.any():
-            return torch.tensor(0.0, device=device)
+            # embeddingsの0倍を返して計算グラフを維持
+            return (embeddings.sum() * 0.0)
 
         # 対角成分を大きな負値でマスク（数値安定化）
         logits_max, _ = sim_matrix.max(dim=1, keepdim=True)
@@ -389,9 +393,14 @@ class HierarchicalSSLLoss(nn.Module):
         Returns:
             (max_candidates,) 候補ID（不足分は-1でパディング）
         """
-        candidates = self.atlas.get_candidate_atomic_ids(
-            dataset, activity, body_part, self.atomic_to_id
-        )
+        try:
+            candidates = self.atlas.get_candidate_atomic_ids(
+                dataset, activity, body_part, self.atomic_to_id
+            )
+        except KeyError:
+            # Atlasに登録されていないActivityの場合、空リストを返す
+            # → 全Prototypeを候補とする（制約なし）
+            candidates = []
 
         # パディング
         if len(candidates) < max_candidates:
@@ -492,7 +501,8 @@ class HierarchicalSSLLoss(nn.Module):
         if prototype_losses:
             loss_prototype = torch.stack(prototype_losses).mean()
         else:
-            loss_prototype = torch.tensor(0.0, device=device)
+            # embeddingsの0倍を返して計算グラフを維持
+            loss_prototype = (embeddings.sum() * 0.0)
 
         loss_dict["prototype"] = loss_prototype
 

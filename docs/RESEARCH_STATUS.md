@@ -1,6 +1,6 @@
 # Motion Primitive Foundation Model via Partial Label Learning for HAR
 
-**最終更新**: 2025-11-21
+**最終更新**: 2025-11-25
 
 ---
 
@@ -24,14 +24,14 @@
 **Window-level labelなしでAtomic Motionを自動発見する。**
 
 LLMで階層的Atlas（Complex/Simple/Atomic）を構築し、PiCOでAtomic Motionを発見。
-Body Part別にPrototypeを学習し、Atomic共有でActivity間の類似性を自動判定。
+Body Part別にPrototypeを学習し、同じPrototypeに割り当てられたサンプル同士をpositiveとして学習。
 
 ### **差別化の核心**
 - ✅ **HAR × Partial Label Learning** (世界初)
 - ✅ **Atomic Motion自動発見** (window-level labelなし)
-- ✅ **3階層Atlas** (Complex/Simple/Atomic)
+- ✅ **3階層Loss** (Complex/Activity/Atomic)
 - ✅ **Body Part別学習** (独立Prototype空間)
-- ✅ **Atomic共有によるsoft positive** (variants問題を自動解決)
+- ✅ **PiCOによるクロスデータセット汎化**
 
 ---
 
@@ -75,7 +75,7 @@ Dataset B: "walking", "running" (Simple Activity)
 Dataset C: "walking_treadmill", "walking_slope" (Variants)
   → 同じAtomic Motionを持つ
 
-→ 3階層Atlas + Atomic共有で解決
+→ 3階層Loss + PiCOで解決
 ```
 
 ---
@@ -85,7 +85,7 @@ Dataset C: "walking_treadmill", "walking_slope" (Variants)
 ### **Atlas構造（v3: Motion-based）**
 
 ```
-Level 0: Complex Activity (baseball, cooking, commuting, ...)
+Level 0: Complex Activity (vacuum_cleaning, cooking, commuting, ...)
   └→ 複数のSimple Activityを含む
   └→ 弱い監督信号として使用
 
@@ -107,101 +107,63 @@ Level 2: Atomic Motion × Body Part (全69種)
 - **Sensor-agnostic**: センサー座標系に依存しない定義
 - **周波数・振幅で区別**: swing_slow (1-2Hz) vs swing_fast (2-4Hz)
 
-### **Atlas JSON構造**
-
-```json
-{
-  "activities": {
-    "baseball": {
-      "level": 0,
-      "children": ["walking", "running", "throwing", "catching"]
-    },
-    "walking": {
-      "level": 1,
-      "atomic_motions": {
-        "wrist": ["arm_swing", "periodic_swing"],
-        "hip": ["vertical_oscillation", "lateral_sway"],
-        "chest": ["torso_rotation"]
-      }
-    },
-    "walking_treadmill": {
-      "level": 1,
-      "atomic_motions": {
-        "wrist": ["arm_swing", "periodic_swing"],
-        "hip": ["vertical_oscillation", "lateral_sway"],
-        "chest": ["torso_rotation"]
-      }
-    },
-    "running": {
-      "level": 1,
-      "atomic_motions": {
-        "wrist": ["arm_swing", "high_frequency_swing"],
-        "hip": ["vertical_oscillation", "high_impact"],
-        "chest": ["torso_rotation"]
-      }
-    }
-  }
-}
-```
-
-### **ポイント**
-- `walking_treadmill`と`walking`は同じatomic_motionsを持つ → **自動的にsoft positive**
-- `walking`と`running`は一部共有（arm_swing, vertical_oscillation）→ **弱いsoft positive**
-- variants問題は**Atlasの階層構造ではなくAtomic共有で解決**
-
 ---
 
 ## 🔬 学習アルゴリズム
 
-### **3つのLoss**
+### **3つのLoss（実装完了 ✅）**
 
 ```
-L_total = λ0 * L_complex + λ1 * L_simple + λ2 * L_atomic
+L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 
-λ0 < λ1 < λ2 (階層が深いほど重視)
-例: λ0=0.1, λ1=0.3, λ2=0.6
+λ0=0.1, λ1=0.3, λ2=0.6
 ```
 
-| Loss | Scope | Positive | Negative |
-|------|-------|----------|----------|
-| L_complex | データセット内 | 同じComplex Activity | 違うComplex Activity |
-| L_simple | データセット内 | 同じSimple Activity | 違うSimple Activity |
-| L_atomic | **全データセット横断** | Atomic共有度で連続重み | Atomic共有なし |
+| Loss | Positive判定 | スコープ | 重み |
+|------|-------------|---------|------|
+| L_atomic | PiCOで同じPrototype（Atomic Motion）に割り当て | **クロスデータセット** | λ2=0.6（大） |
+| L_activity | 同じActivity名 | 同じデータセット内 | λ1=0.3（中） |
+| L_complex | 同じComplex Activity名 | 同じデータセット内 | λ0=0.1（小） |
+
+### **各Lossの詳細**
 
 ```
-1. Complex Activity Loss (Level 0)
-   - Scope: データセット内
-   - 通常のContrastive Loss（hard label）
-   - 重み λ0: 弱（内部に多様なSimple Activityを含むため）
+1. L_atomic (重み大) - 核心
+   - PiCOでサンプル → Prototype（Atomic Motion）への割り当てを推定
+   - 同じPrototypeに割り当てられたサンプル同士がpositive
+   - Body Part別に独立したPrototype空間
+   - クロスデータセットで学習（汎化性能の源泉）
 
-2. Simple Activity Loss (Level 1)
-   - Scope: データセット内
-   - 通常のContrastive Loss（hard label）
-   - 重み λ1: 中
+2. L_activity (重み中)
+   - 同じActivity名 + 同じデータセット → positive
+   - 全Activity対象（Complex/Simple両方）
+   - データセット内のみ
 
-3. Atomic Motion Loss (Level 2) - 核心
-   - Scope: 全データセット横断（Foundation Modelの汎化性能の源泉）
-   - Body Part別にPiCOで学習（wrist同士、hip同士で比較）
-   - Atomic共有度でsoft positive（連続重み 0〜1）
-   - 重み λ2: 強（最も細かい粒度）
+3. L_complex (重み小)
+   - 同じComplex Activity名 + 同じデータセット → positive
+   - Complex Activity（level=0）のみを対象
+   - データセット内のみ
 ```
 
-### **Soft Positive判定（Atomic共有）**
+### **PiCOによるAtomic Motion発見**
 
 ```
-Activity A: atomic_motions = [arm_swing, periodic_swing]
-Activity B: atomic_motions = [arm_swing, wrist_rotation]
+核心:
+- Activity間の類似度計算ではない
+- サンプル単位でPrototype割り当てを推定
+- 同じPrototypeに割り当てられたサンプル同士がpositive
 
-共有: [arm_swing] → 1個
-
-Soft positive weight = 共有数 / max(|A|, |B|) = 1/2 = 0.5
+例:
+- walkingのサンプルA → PiCOが「W01_swing_slow」と推定
+- nordic_walkingのサンプルB → PiCOが「W01_swing_slow」と推定
+- → AとBは同じAtomic Motionなのでpositive（Activity名は関係なし）
 ```
 
 ### **Body Part別学習**
 
 ```
 - 共有エンコーダー（全Body Part共通）
-- Body Part別Prototype空間（wrist/hip/chest独立）
+- Body Part別Prototype空間（wrist/hip/chest/leg/head独立）
 - 同一Body Part内でのみContrastive Learning
 ```
 
@@ -227,26 +189,24 @@ Soft positive weight = 共有数 / max(|A|, |B|) = 1/2 = 0.5
 - w/o PiCO (random label)
 - w/o 階層 (single-level)
 - w/o Body Part別 (全部混ぜ)
-- w/o Soft positive (hard only)
+- w/o L_atomic (Activity Lossのみ)
 
 ---
 
 ## 📅 タイムライン
 
-### Week 1: Atlas構築
-- 19データセットのラベル + Body Part情報収集
-- LLMでAtlas構築（Complex/Simple/Atomic 3階層）
-- 人間評価 (>70%)
-
-### Week 2: 3階層Loss実装
-- L_complex, L_simple: データセット内Contrastive Loss
-- L_atomic: クロスデータセットPiCO Loss
-- Atomic共有度によるsoft positive重み計算
+### Week 1-2: Atlas構築 + Loss実装 ✅
+- ~~19データセットのラベル + Body Part情報収集~~ ✅
+- ~~LLMでAtlas構築（Complex/Simple/Atomic 3階層）~~ ✅
+- ~~3階層Loss実装~~ ✅
+  - L_complex: Complex Activity Contrastive Loss
+  - L_activity: Activity Contrastive Loss
+  - L_atomic: PiCO-based Prototype Loss
 
 ### Week 3: 学習パイプライン
-- Body Part別Prototype空間の実装
 - 19データセット統合学習
 - λ0, λ1, λ2のチューニング
+- 人間評価 (>70%)
 
 ### Week 4: 評価
 - Atomic発見精度（手動100 window）
@@ -254,9 +214,9 @@ Soft positive weight = 共有数 / max(|A|, |B|) = 1/2 = 0.5
 
 ### Week 5: Ablation
 - w/o L_complex
-- w/o L_simple
-- w/o クロスデータセット（L_atomicをデータセット内のみ）
-- w/o Soft positive (hard only)
+- w/o L_activity
+- w/o L_atomic
+- w/o クロスデータセット
 
 ### Week 6: Cross-location
 - Transfer実験
@@ -288,14 +248,18 @@ Soft positive weight = 共有数 / max(|A|, |B|) = 1/2 = 0.5
 
 ## 🔄 更新履歴
 
+- **2025-11-25**:
+  - 3階層Loss実装完了
+  - L_atomic: PiCOベースのPrototype割り当てでpositive判定（Activity間類似度ではない）
+  - L_activity: 同じActivity + 同じデータセット → positive
+  - L_complex: 同じComplex Activity + 同じデータセット → positive
+  - 実装ファイル: `src/losses/hierarchical_loss.py`
+
 - **2025-11-21**:
   - Atlas v3完成（Motion-based、69 Atomic Motions）
   - 姿勢ベース→動作ベースに統一（静的Activityはゼロショット対象外）
-  - Body Part Taxonomy整備（head/wrist/hip/chest/leg + forearm/thigh/calf/ankle）
+  - Body Part Taxonomy整備（head/wrist/hip/chest/leg）
   - 14データセットのActivity Mapping完成
-  - 3階層Loss設計を確定:
-    - L_complex, L_simple: データセット内Contrastive
-    - L_atomic: 全データセット横断PiCO
 
 - **2025-11-20**:
   - PiCO (Partial Label Learning) を核心手法として採用
@@ -307,18 +271,34 @@ Soft positive weight = 共有数 / max(|A|, |B|) = 1/2 = 0.5
 
 1. ~~19データセットのラベル + Body Part情報収集~~ ✅
 2. ~~Atlas構築（Complex/Simple/Atomic 3階層）~~ ✅ (v3: 69 Atomic Motions)
-3. **人間評価（目標 >70%）** ← 次のステップ
-4. **3階層Loss実装（L_complex, L_simple, L_atomic）**
+3. ~~3階層Loss実装~~ ✅
+4. **学習パイプライン統合** ← 次のステップ
+5. **人間評価（目標 >70%）**
+6. **小規模実験で動作確認**
 
 ---
 
-## 📁 Atlas関連ファイル
+## 📁 関連ファイル
 
 ```
 docs/atlas/
-├── atlas_v3.json                    # Atomic Motion定義 (69種)
-├── dataset_activity_mapping_v3.json # 14データセット × Activity → Atomic
-└── body_part_taxonomy.json          # Body Part分類 (8カテゴリ)
+├── atomic_motions.json              # Atomic Motion定義 (69種) + Activity Level
+├── activity_mapping.json            # データセット × Activity → Atomic Mapping
+└── body_part_taxonomy.json          # Body Part分類
+
+src/losses/
+└── hierarchical_loss.py             # 3階層Loss実装
+    ├── HierarchicalSSLLoss          # メインクラス
+    ├── ComplexActivityLoss          # L_complex
+    ├── SimpleActivityLoss           # L_activity
+    ├── AtomicMotionLoss             # L_atomic (PiCO)
+    └── BodyPartPrototypes           # Body Part別Prototype管理
+
+src/utils/
+└── atlas_loader.py                  # Atlas読み込み・正規化ユーティリティ
+
+src/data/
+└── hierarchical_dataset.py          # 階層的SSL用データセット
 ```
 
 ---
@@ -326,8 +306,8 @@ docs/atlas/
 **核心の貢献**: Window-level labelなしでAtomic Motionを自動発見
 
 **技術的ポイント**:
-- 3階層Atlas（Complex/Simple/Atomic）
+- 3階層Loss（Complex/Activity/Atomic）
+- PiCOによるPrototype割り当て → 同じPrototypeがpositive
 - Motion-based Atomic定義（姿勢は含まない）
 - Body Part別Prototype学習
-- Atomic共有によるsoft positive（variants自動解決）
 - 動的Activityに特化したゼロショット認識

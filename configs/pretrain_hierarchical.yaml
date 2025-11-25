@@ -1,11 +1,23 @@
 # Hierarchical SSL Pre-training Configuration
 # PiCO inspired hierarchical contrastive learning
+#
+# Usage: python src/training/pretrain.py --config configs/pretrain_hierarchical.yaml
+
+# モード設定
+hierarchical:
+  enabled: true  # 階層的SSLを有効化
+  atlas_path: docs/atlas/activity_mapping.json
 
 # 実験設定
 experiment_dir: experiments/hierarchical
 
-# Atlas設定
-atlas_path: docs/atlas/activity_mapping.json
+# 基本設定（pretrain.py互換）
+seed: 42
+device: cuda
+
+# チェックポイント設定
+checkpoint:
+  save_freq: 10
 
 # データ設定
 data:

@@ -352,12 +352,12 @@ class HierarchicalSSLLoss(nn.Module):
         # Body Part設定
         self.body_parts = AtlasLoader.NORMALIZED_BODY_PARTS
 
-        # 各Body PartのAtomic Motion数を取得
-        num_prototypes = {}
+        # 各Body PartのPrototype数（= Atomic Motion数）をatomic_motions.jsonから取得
+        num_prototypes = self.atlas.get_prototype_counts()
+        # 最低1つは必要
         for bp in self.body_parts:
-            num_prototypes[bp] = self.atlas.get_num_atomic_motions(bp)
-            if num_prototypes[bp] == 0:
-                num_prototypes[bp] = 1  # 最低1つは必要
+            if bp not in num_prototypes or num_prototypes[bp] == 0:
+                num_prototypes[bp] = 1
 
         # Prototype管理
         self.prototypes = BodyPartPrototypes(

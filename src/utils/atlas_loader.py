@@ -1,8 +1,10 @@
 """
 Atlas Loader for Hierarchical Activity Recognition
 
-Atlasファイル（activity_mapping.json）を読み込み、
-Activity → Atomic Motion マッピングを提供する。
+Atlasファイル群を読み込み、以下の情報を提供する：
+- activity_mapping.json: Activity → Atomic Motion マッピング
+- atomic_motions.json: Atomic Motionの定義とBody Part別分類
+- body_part_taxonomy.json: センサー位置の正規化マッピング
 
 Usage:
     atlas = AtlasLoader("docs/atlas/activity_mapping.json")
@@ -17,6 +19,18 @@ Usage:
     # Body Part別の候補Atomic Motions取得
     wrist_atomics = atlas.get_atomic_motions_by_body_part("dsads", "walking", "wrist")
     # => ["W01_swing_slow"]
+
+    # Body Part別のPrototype数（= Atomic Motion数）を取得
+    prototype_counts = atlas.get_prototype_counts()
+    # => {"wrist": 18, "hip": 16, "chest": 11, "leg": 17, "head": 7}
+
+    # センサー位置の正規化
+    normalized = atlas.normalize_body_part("dsads", "RightArm")
+    # => "wrist"
+
+    # Activity名の正規化（データセット間で統一）
+    canonical = atlas.get_canonical_activity_name("dsads", "sitting")
+    # => "sitting"
 """
 
 import json
@@ -48,13 +62,21 @@ class AtlasLoader:
         """
         Args:
             atlas_path: activity_mapping.json へのパス
+                       （同じディレクトリからatomic_motions.json, body_part_taxonomy.jsonも読み込む）
         """
         self.atlas_path = Path(atlas_path)
+        self.atlas_dir = self.atlas_path.parent
         self.atlas = self._load_atlas()
+
+        # 追加のAtlasファイルを読み込み
+        self.atomic_motions = self._load_atomic_motions()
+        self.body_part_taxonomy = self._load_body_part_taxonomy()
 
         # キャッシュ
         self._all_atomic_motions: Optional[Dict[str, Set[str]]] = None
         self._activity_to_atomics: Optional[Dict[Tuple[str, str], Dict[str, List[str]]]] = None
+        self._prototype_counts: Optional[Dict[str, int]] = None
+        self._dataset_sensor_mapping: Optional[Dict[str, Dict[str, str]]] = None
 
     # メタデータキー（データセットではないトップレベルキー）
     METADATA_KEYS = {"version", "description", "note", "notes"}
@@ -72,6 +94,24 @@ class AtlasLoader:
             k: v for k, v in raw_data.items()
             if k not in self.METADATA_KEYS and isinstance(v, dict)
         }
+
+    def _load_atomic_motions(self) -> Dict:
+        """atomic_motions.jsonを読み込む"""
+        atomic_path = self.atlas_dir / "atomic_motions.json"
+        if not atomic_path.exists():
+            return {}
+
+        with open(atomic_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _load_body_part_taxonomy(self) -> Dict:
+        """body_part_taxonomy.jsonを読み込む"""
+        taxonomy_path = self.atlas_dir / "body_part_taxonomy.json"
+        if not taxonomy_path.exists():
+            return {}
+
+        with open(taxonomy_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     def get_datasets(self) -> List[str]:
         """登録されている全データセット名を取得"""
@@ -202,9 +242,32 @@ class AtlasLoader:
         """
         Atomic Motion名をID（整数）に変換するマッピングを生成
 
+        atomic_motions.jsonの定義に基づいてIDを割り当て。
+        ファイルが存在しない場合はactivity_mapping.jsonから集計。
+
         Returns:
             {"wrist": {"W01_swing_slow": 0, "W02_swing_fast": 1, ...}, ...}
         """
+        # atomic_motions.jsonから取得（存在する場合）
+        if self.atomic_motions and "atomic_motions" in self.atomic_motions:
+            mapping = {}
+            atomic_defs = self.atomic_motions["atomic_motions"]
+
+            for body_part, motions in atomic_defs.items():
+                # body_partを正規化（head, wrist, hip, chest, leg）
+                normalized_bp = self._normalize_body_part(body_part)
+
+                if normalized_bp not in mapping:
+                    mapping[normalized_bp] = {}
+
+                # 各motionにIDを割り当て
+                sorted_motions = sorted(motions.keys())
+                for idx, motion in enumerate(sorted_motions):
+                    mapping[normalized_bp][motion] = idx
+
+            return mapping
+
+        # フォールバック: activity_mapping.jsonから集計
         all_atomics = self.get_all_atomic_motions()
         mapping = {}
 
@@ -269,6 +332,195 @@ class AtlasLoader:
         lines.append(f"Total activities: {total_activities}")
 
         return "\n".join(lines)
+
+    # ========================================
+    # 新規メソッド: Prototype数、Body Part正規化、Activity名正規化
+    # ========================================
+
+    def get_prototype_counts(self) -> Dict[str, int]:
+        """
+        Body Part別のPrototype数（= Atomic Motion数）を取得
+
+        atomic_motions.jsonから直接読み込む。
+        ファイルが存在しない場合はactivity_mapping.jsonから集計。
+
+        Returns:
+            {"wrist": 18, "hip": 16, "chest": 11, "leg": 17, "head": 7}
+        """
+        if self._prototype_counts is not None:
+            return self._prototype_counts
+
+        # atomic_motions.jsonから取得（存在する場合）
+        if self.atomic_motions and "atomic_motions" in self.atomic_motions:
+            counts = {}
+            atomic_defs = self.atomic_motions["atomic_motions"]
+
+            for body_part, motions in atomic_defs.items():
+                # body_partを正規化（head, wrist, hip, chest, leg）
+                normalized_bp = self._normalize_body_part(body_part)
+                if normalized_bp not in counts:
+                    counts[normalized_bp] = 0
+                counts[normalized_bp] += len(motions)
+
+            self._prototype_counts = counts
+            return self._prototype_counts
+
+        # フォールバック: activity_mapping.jsonから集計
+        all_atomics = self.get_all_atomic_motions()
+        self._prototype_counts = {bp: len(motions) for bp, motions in all_atomics.items()}
+        return self._prototype_counts
+
+    def get_dataset_sensor_mapping(self) -> Dict[str, Dict[str, str]]:
+        """
+        データセット別のセンサー位置マッピングを取得
+
+        body_part_taxonomy.jsonから読み込む。
+
+        Returns:
+            {
+                "dsads": {"Torso": "chest", "RightArm": "wrist", ...},
+                "mhealth": {"Chest": "chest", "LeftAnkle": "ankle", ...},
+                ...
+            }
+        """
+        if self._dataset_sensor_mapping is not None:
+            return self._dataset_sensor_mapping
+
+        if self.body_part_taxonomy and "dataset_sensor_mapping" in self.body_part_taxonomy:
+            self._dataset_sensor_mapping = self.body_part_taxonomy["dataset_sensor_mapping"]
+        else:
+            self._dataset_sensor_mapping = {}
+
+        return self._dataset_sensor_mapping
+
+    # 細かいBody Partカテゴリを5つの学習用カテゴリに統合
+    BODY_PART_TO_LEARNING_CATEGORY = {
+        "wrist": "wrist",
+        "forearm": "wrist",  # forearm → wrist
+        "hip": "hip",
+        "chest": "chest",
+        "head": "head",
+        "thigh": "leg",
+        "calf": "leg",
+        "ankle": "leg",
+        "leg": "leg",
+    }
+
+    def normalize_body_part(self, dataset: str, sensor_location: str) -> str:
+        """
+        データセット固有のセンサー位置を正規化されたBody Partカテゴリに変換
+
+        2段階で正規化:
+        1. dataset_sensor_mappingでデータセット固有の名前を中間カテゴリに変換
+        2. BODY_PART_TO_LEARNING_CATEGORYで5つの学習用カテゴリに統合
+
+        Args:
+            dataset: データセット名 (例: "dsads", "mhealth")
+            sensor_location: センサー位置名 (例: "RightArm", "LeftAnkle")
+
+        Returns:
+            正規化されたBody Part名 (wrist, hip, chest, leg, headのいずれか)
+        """
+        dataset_lower = dataset.lower()
+        sensor_mapping = self.get_dataset_sensor_mapping()
+
+        # Step 1: データセット固有のマッピングで中間カテゴリを取得
+        intermediate = None
+        if dataset_lower in sensor_mapping:
+            ds_mapping = sensor_mapping[dataset_lower]
+            if sensor_location in ds_mapping:
+                intermediate = ds_mapping[sensor_location]
+
+        # フォールバック: 汎用的な正規化
+        if intermediate is None:
+            intermediate = self._normalize_body_part(sensor_location)
+
+        # Step 2: 中間カテゴリを5つの学習用カテゴリに統合
+        return self.BODY_PART_TO_LEARNING_CATEGORY.get(intermediate, intermediate)
+
+    def get_canonical_activity_name(self, dataset: str, activity: str) -> str:
+        """
+        データセット固有のActivity名をAtlasの正規名に変換
+
+        activity_mapping.jsonに定義されているActivity名をそのまま返す。
+        見つからない場合は入力をsnake_case化して返す。
+
+        Args:
+            dataset: データセット名
+            activity: Activity名（ラベルIDではなく文字列）
+
+        Returns:
+            正規化されたActivity名
+        """
+        dataset_lower = dataset.lower()
+        activity_lower = activity.lower().replace(" ", "_").replace("-", "_")
+
+        # Atlasに登録されているActivity一覧を取得
+        try:
+            registered_activities = self.get_activities(dataset_lower)
+
+            # 完全一致
+            if activity_lower in registered_activities:
+                return activity_lower
+
+            # 大文字小文字を無視してマッチ
+            for reg_act in registered_activities:
+                if reg_act.lower() == activity_lower:
+                    return reg_act
+
+        except KeyError:
+            pass
+
+        # マッチしない場合は正規化した入力を返す
+        return activity_lower
+
+    def get_activity_name_by_label(self, dataset: str, label_id: int) -> str:
+        """
+        ラベルIDからActivity名を取得
+
+        各データセットのactivitiesの順序に基づいてマッピング。
+
+        Args:
+            dataset: データセット名
+            label_id: ラベルID（整数）
+
+        Returns:
+            Activity名（見つからない場合は "unknown_{label_id}"）
+        """
+        dataset_lower = dataset.lower()
+
+        try:
+            activities = self.get_activities(dataset_lower)
+            if 0 <= label_id < len(activities):
+                return activities[label_id]
+        except KeyError:
+            pass
+
+        return f"unknown_{label_id}"
+
+    def get_all_canonical_activities(self) -> Set[str]:
+        """
+        全データセットの全Activity名（正規化済み）を取得
+
+        Returns:
+            Activity名のSet
+        """
+        all_activities = set()
+        for dataset in self.get_datasets():
+            all_activities.update(self.get_activities(dataset))
+        return all_activities
+
+    def get_activity_to_id(self) -> Dict[str, int]:
+        """
+        Activity名 → IDのマッピングを生成
+
+        全データセットのActivityをアルファベット順にソートしてIDを割り当て。
+
+        Returns:
+            {"cycling": 0, "jumping": 1, "lying": 2, ...}
+        """
+        all_activities = sorted(self.get_all_canonical_activities())
+        return {act: idx for idx, act in enumerate(all_activities)}
 
 
 # 便利関数

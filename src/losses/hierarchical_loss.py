@@ -440,15 +440,19 @@ class AtomicMotionLoss(nn.Module):
     核心的アイデア:
     - PiCOでサンプル → Atomic Motion（Prototype）への割り当てを推定
     - 同じAtomic Motionに割り当てられたサンプル同士をpositive
-    - Activity間の類似度ではなく、サンプル単位の割り当て結果でpositive判定
+    - Activity名から候補Atomic Motionを絞り込み（Partial Label Learning）
+    - 候補内でSoft Assignmentを計算
 
     ラベルなしデータの扱い:
-    - NHANESなどのラベルなしデータは全Body PartのPrototypeに対して学習
-    - Body Partが不明（"pax", "unknown"等）の場合、全Body Partで使用
+    - NHANESなどのラベルなしデータは全Prototypeが候補
+    - Body Partが不明（"pax", "unknown"等）の場合、バッチ内のBody Partで学習
     """
 
     # ラベルなしデータのBody Part識別子
     UNLABELED_BODY_PARTS = {"pax", "unknown", ""}
+
+    # ラベルなしActivity識別子
+    UNLABELED_ACTIVITY_PREFIXES = ("unknown",)
 
     def __init__(
         self,
@@ -461,10 +465,89 @@ class AtomicMotionLoss(nn.Module):
         self.prototypes = prototypes
         self.temperature = temperature
 
+        # Atomic Motion → ID マッピングをキャッシュ
+        self.atomic_to_id = atlas.get_atomic_motion_to_id()
+
+    def _is_unlabeled_activity(self, activity: str) -> bool:
+        """Activity名がラベルなしかどうか判定"""
+        if activity is None:
+            return True
+        act_lower = activity.lower()
+        return act_lower.startswith(self.UNLABELED_ACTIVITY_PREFIXES)
+
+    def _get_candidate_ids_tensor(
+        self,
+        dataset_ids: List[str],
+        activity_ids: List[str],
+        body_part: str,
+        indices: List[int],
+        device: torch.device,
+    ) -> Optional[torch.Tensor]:
+        """
+        各サンプルの候補Atomic Motion IDをTensorとして取得
+
+        Args:
+            dataset_ids: 全サンプルのデータセット名
+            activity_ids: 全サンプルのActivity名
+            body_part: Body Part名
+            indices: このBody Partのサンプルインデックス
+            device: デバイス
+
+        Returns:
+            (len(indices), max_candidates) の候補IDテンソル、-1はパディング
+            全サンプルがラベルなしの場合はNone（全Prototypeが候補）
+        """
+        num_prototypes = self.prototypes.num_prototypes.get(body_part, 0)
+        if num_prototypes == 0:
+            return None
+
+        all_candidates = []
+        max_candidates = 0
+        has_labeled = False
+
+        for idx in indices:
+            dataset = dataset_ids[idx]
+            activity = activity_ids[idx]
+
+            # ラベルなしの場合は全Prototypeが候補
+            if self._is_unlabeled_activity(activity):
+                candidates = list(range(num_prototypes))
+            else:
+                # Atlasから候補Atomic Motion IDを取得
+                try:
+                    candidates = self.atlas.get_candidate_atomic_ids(
+                        dataset, activity, body_part, self.atomic_to_id
+                    )
+                    if not candidates:
+                        # Atlasに情報がない場合は全Prototypeが候補
+                        candidates = list(range(num_prototypes))
+                    else:
+                        has_labeled = True
+                except (KeyError, ValueError):
+                    candidates = list(range(num_prototypes))
+
+            all_candidates.append(candidates)
+            max_candidates = max(max_candidates, len(candidates))
+
+        # 全サンプルがラベルなしまたは候補が全Prototypeの場合はNone
+        if not has_labeled:
+            return None
+
+        # パディングして揃える
+        candidate_tensor = torch.full(
+            (len(indices), max_candidates), -1, dtype=torch.long, device=device
+        )
+        for i, candidates in enumerate(all_candidates):
+            candidate_tensor[i, :len(candidates)] = torch.tensor(candidates, device=device)
+
+        return candidate_tensor
+
     def forward(
         self,
         embeddings: torch.Tensor,
         body_parts: List[str],
+        dataset_ids: Optional[List[str]] = None,
+        activity_ids: Optional[List[str]] = None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         PiCOによるAtomic Motion Loss
@@ -472,12 +555,13 @@ class AtomicMotionLoss(nn.Module):
         サンプル → Prototype（Atomic Motion）への割り当てを推定し、
         同じPrototypeに割り当てられたサンプル同士をpositiveとしてContrastive Learning
 
-        ラベルなしデータ（body_part in UNLABELED_BODY_PARTS）は、バッチ内に存在する
-        Body Partでのみ使用。例えばwristバッチならwrist Prototypeのみで学習。
+        Activity名がある場合はAtlasから候補Atomic Motionを絞り込む（PiCOの核心）
 
         Args:
             embeddings: (batch, embed_dim)
             body_parts: Body Part名のリスト
+            dataset_ids: データセット名のリスト（candidate_ids計算用）
+            activity_ids: Activity名のリスト（candidate_ids計算用）
 
         Returns:
             (total_loss, {"atomic_wrist": loss, "atomic_hip": loss, ...})
@@ -516,12 +600,18 @@ class AtomicMotionLoss(nn.Module):
             indices_tensor = torch.tensor(indices, device=device)
             bp_embeddings = embeddings[indices_tensor]
 
+            # 候補Atomic Motion IDを計算（PiCOの核心）
+            candidate_ids = None
+            if dataset_ids is not None and activity_ids is not None:
+                candidate_ids = self._get_candidate_ids_tensor(
+                    dataset_ids, activity_ids, bp, indices, device
+                )
+
             # PiCO: サンプル → Prototype（Atomic Motion）へのSoft割り当て
-            # candidate_ids=None で全Prototypeを候補とする
             soft_assignments = self.prototypes.get_soft_assignments(
                 bp_embeddings,
                 bp,
-                candidate_ids=None,  # 全Prototypeが候補
+                candidate_ids=candidate_ids,
                 temperature=self.temperature,
             )
 
@@ -729,7 +819,10 @@ class HierarchicalSSLLoss(nn.Module):
         loss_dict["activity"] = loss_activity
 
         # 3. Atomic Motion Loss (L_atomic) - PiCOで同じPrototype → positive（全データ使用）
-        loss_atomic, atomic_details = self.atomic_loss_fn(embeddings, body_parts)
+        # dataset_ids/activity_idsを渡してcandidate_idsを計算（PiCOの核心）
+        loss_atomic, atomic_details = self.atomic_loss_fn(
+            embeddings, body_parts, dataset_ids, activity_ids
+        )
         loss_dict["atomic"] = loss_atomic
         loss_dict.update(atomic_details)
 

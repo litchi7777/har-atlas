@@ -197,16 +197,18 @@ class HierarchicalSSLDataset(Dataset):
         }
 
 
-def collate_hierarchical(batch: List[Dict], samples_per_source: int = 4) -> Optional[Dict[str, Any]]:
+def collate_hierarchical(batch: List[Dict], samples_per_source: int = 128) -> Optional[Dict[str, Any]]:
     """
     カスタムcollate関数
 
     各サンプルからランダムにウィンドウを抽出してバッチを構成
+    Activity名もAtlasから取得して返す
     """
     all_data = []
     all_labels = []
     all_datasets = []
     all_body_parts = []
+    all_activity_ids = []
 
     for item in batch:
         data = item["data"]  # (N, C, T)
@@ -227,6 +229,12 @@ def collate_hierarchical(batch: List[Dict], samples_per_source: int = 4) -> Opti
         all_datasets.extend([dataset] * n_select)
         all_body_parts.extend([body_part] * n_select)
 
+        # ラベルIDからActivity名を取得
+        for idx in indices:
+            label_id = labels[idx].item()
+            activity_name = get_activity_name(dataset, label_id)
+            all_activity_ids.append(activity_name)
+
     if not all_data:
         return None
 
@@ -235,6 +243,7 @@ def collate_hierarchical(batch: List[Dict], samples_per_source: int = 4) -> Opti
         "labels": torch.cat(all_labels, dim=0),  # (total_samples,)
         "datasets": all_datasets,
         "body_parts": all_body_parts,
+        "activity_ids": all_activity_ids,  # Activity名のリスト
     }
 
 

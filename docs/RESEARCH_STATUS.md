@@ -1,6 +1,6 @@
 # Motion Primitive Foundation Model via Partial Label Learning for HAR
 
-**最終更新**: 2025-11-25
+**最終更新**: 2025-11-26
 
 ---
 
@@ -203,10 +203,11 @@ L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
   - L_activity: Activity Contrastive Loss
   - L_atomic: PiCO-based Prototype Loss
 
-### Week 3: 学習パイプライン
-- 19データセット統合学習
-- λ0, λ1, λ2のチューニング
-- 人間評価 (>70%)
+### Week 3: 学習パイプライン ← **現在**
+- ~~Body Part別バッチサンプラー実装~~ ✅
+- ~~MTL + Hierarchical Loss統合~~ ✅
+- 🔄 **小規模実験で動作確認**
+- 🔄 **λ0, λ1, λ2のチューニング**
 
 ### Week 4: 評価
 - Atomic発見精度（手動100 window）
@@ -246,7 +247,51 @@ L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 
 ---
 
+## 🔧 実装状況（2025-11-26現在）
+
+### ✅ 完了
+1. **Atlas構築** (docs/atlas/)
+   - atomic_motions.json: 69種のAtomic Motion定義
+   - activity_mapping.json: データセット×Activity→Atomic Mapping
+   - body_part_taxonomy.json: Body Part分類
+
+2. **3階層Loss実装** (src/losses/hierarchical_loss.py)
+   - L_complex: ComplexActivityContrastiveLoss
+   - L_activity: ActivityContrastiveLoss
+   - L_atomic: AtomicMotionLoss (PiCO)
+   - BodyPartPrototypes: Body Part別Prototype管理
+
+3. **統合Loss** (src/losses/combined_ssl_loss.py)
+   - CombinedSSLLoss: MTL + Hierarchical Lossの統合
+
+4. **データローダー** (src/data/hierarchical_dataset.py)
+   - HierarchicalSSLDataset: Activity + Body Part情報付きデータセット
+   - BodyPartBatchSampler: Body Part別バッチサンプリング
+
+5. **学習スクリプト** (src/training/pretrain.py)
+   - Combined mode: MTL + Hierarchical SSL同時学習
+
+### ⚠️ 要確認・修正
+1. **NHANESの扱い**
+   - 現状: 全バッチに含める設計だが、ラベルなしのためL_atomic計算不可
+   - 方針: NHANESはwristデータなのでwristバッチにのみ含めるべき？
+   - **決定**: Body Part別バッチでは除外し、MTL部分のみで使用
+
+2. **PiCO実装の検証** ✅
+   - 現状: candidate_ids=None で全Prototypeが候補
+   - 動作: soft_assignment → positive_weights計算 → Weighted InfoNCE
+   - 期待動作: 学習が進むにつれてPrototypeがAtomic Motionを表現
+
+---
+
 ## 🔄 更新履歴
+
+- **2025-11-26**:
+  - Body Part別バッチサンプラー（BodyPartBatchSampler）実装完了
+  - MTL + Hierarchical SSL統合モード完成
+  - 設定ファイル統一（sensor_data → data）
+  - RESEARCH_STATUS.md更新
+  - **現在の方針確認**: 実装は研究目標と整合している
 
 - **2025-11-25**:
   - 3階層Loss実装完了
@@ -269,12 +314,29 @@ L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 
 ## 📌 Next Actions
 
-1. ~~19データセットのラベル + Body Part情報収集~~ ✅
-2. ~~Atlas構築（Complex/Simple/Atomic 3階層）~~ ✅ (v3: 69 Atomic Motions)
-3. ~~3階層Loss実装~~ ✅
-4. **学習パイプライン統合** ← 次のステップ
-5. **人間評価（目標 >70%）**
-6. **小規模実験で動作確認**
+### 即座に実行
+1. **小規模実験で動作確認** ← 最優先
+   - 3-5データセットで学習を実行
+   - Loss値が下がるか確認
+   - Prototype割り当てが収束するか確認
+
+2. **NHANESの扱いを決定**
+   - 選択肢A: wristバッチにのみ含める（Body Part準拠）
+   - 選択肢B: L_atomic計算からは除外し、MTL部分のみで使用
+   - 選択肢C: 除外（ラベルなしデータは使わない）
+   - **推奨**: 選択肢B（MTL + Hierarchical両方で貢献、ただしL_atomic計算時はスキップ）
+
+3. **コミット・プッシュ**
+   - BodyPartBatchSampler実装をコミット
+
+### 今週中
+4. **λ0, λ1, λ2のチューニング**
+   - 初期値: 0.1, 0.3, 0.6
+   - Grid searchで最適値を探索
+
+5. **人間評価の準備**
+   - 100 windowのサンプリング
+   - 評価UIの準備
 
 ---
 
@@ -287,18 +349,22 @@ docs/atlas/
 └── body_part_taxonomy.json          # Body Part分類
 
 src/losses/
-└── hierarchical_loss.py             # 3階層Loss実装
-    ├── HierarchicalSSLLoss          # メインクラス
-    ├── ComplexActivityLoss          # L_complex
-    ├── SimpleActivityLoss           # L_activity
-    ├── AtomicMotionLoss             # L_atomic (PiCO)
-    └── BodyPartPrototypes           # Body Part別Prototype管理
+├── hierarchical_loss.py             # 3階層Loss実装
+│   ├── HierarchicalSSLLoss          # メインクラス
+│   ├── ComplexActivityLoss          # L_complex
+│   ├── SimpleActivityLoss           # L_activity
+│   ├── AtomicMotionLoss             # L_atomic (PiCO)
+│   └── BodyPartPrototypes           # Body Part別Prototype管理
+└── combined_ssl_loss.py             # MTL + Hierarchical Loss統合
 
 src/utils/
 └── atlas_loader.py                  # Atlas読み込み・正規化ユーティリティ
 
 src/data/
-└── hierarchical_dataset.py          # 階層的SSL用データセット
+└── hierarchical_dataset.py          # 階層的SSL用データセット + BodyPartBatchSampler
+
+configs/
+└── pretrain.yaml                    # 統合学習設定
 ```
 
 ---

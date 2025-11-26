@@ -37,6 +37,7 @@ from src.data.augmentations import (
 from src.data.batch_dataset import SubjectWiseLoader
 from src.data.hierarchical_dataset import (
     HierarchicalSSLDataset,
+    BodyPartBatchSampler,
     collate_hierarchical,
     get_activity_name,
 )
@@ -526,25 +527,46 @@ def setup_hierarchical_dataloaders(
         split="test",
     )
 
-    logger.info(f"Hierarchical SSL - Train samples: {len(train_dataset)}")
-    logger.info(f"Hierarchical SSL - Val samples: {len(val_dataset)}")
-    logger.info(f"Hierarchical SSL - Test samples: {len(test_dataset)}")
+    logger.info(f"Hierarchical SSL - Train files: {len(train_dataset)}")
+    logger.info(f"Hierarchical SSL - Val files: {len(val_dataset)}")
+    logger.info(f"Hierarchical SSL - Test files: {len(test_dataset)}")
 
-    # データローダー作成
-    batch_size = config.get("training", {}).get("batch_size", 8)
-    samples_per_source = config.get("training", {}).get("samples_per_source", 32)
+    # データローダー設定
+    training_config = config.get("training", {})
+    batch_size = training_config.get("batch_size", 8)
+    samples_per_source = training_config.get("samples_per_source", 32)
+    batches_per_epoch = training_config.get("batches_per_epoch", 100)
+    unlabeled_datasets = hierarchical_config.get("unlabeled_datasets", ["nhanes"])
+    unlabeled_per_batch = hierarchical_config.get("unlabeled_per_batch", 2)
 
     # collate_fn をカリー化して samples_per_source を渡す
     from functools import partial
     collate_fn = partial(collate_hierarchical, samples_per_source=samples_per_source)
 
+    # Body Part別バッチサンプラーを使用
+    train_sampler = BodyPartBatchSampler(
+        dataset=train_dataset,
+        batch_size=batch_size,
+        batches_per_epoch=batches_per_epoch,
+        unlabeled_datasets=unlabeled_datasets,
+        unlabeled_per_batch=unlabeled_per_batch,
+        seed=config.get("seed", 42),
+    )
+
+    # Body Part別の統計をログ
+    logger.info("Body Part distribution (train):")
+    for bp, indices in train_sampler.body_part_indices.items():
+        logger.info(f"  {bp}: {len(indices)} files")
+    logger.info(f"  unlabeled ({unlabeled_datasets}): {len(train_sampler.unlabeled_indices)} files")
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
+        batch_sampler=train_sampler,
         collate_fn=collate_fn,
         num_workers=0,
     )
+
+    # Val/Testは従来通り（全データ使用、シャッフルなし）
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -566,7 +588,8 @@ def setup_hierarchical_dataloaders(
     sequence_length = sample["data"].shape[2]
 
     logger.info(f"Input shape: ({in_channels}, {sequence_length})")
-    logger.info(f"Training batches per epoch: {len(train_loader)}")
+    logger.info(f"Training batches per epoch: {len(train_sampler)}")
+    logger.info(f"Actual batch size: {batch_size} files × {samples_per_source} samples = ~{batch_size * samples_per_source} samples/batch")
 
     return train_loader, val_loader, test_loader, in_channels, sequence_length, atlas
 

@@ -3,15 +3,19 @@ Hierarchical SSL用データセット
 
 Activity + Body Part情報を含むデータセットとcollate関数を提供
 AtlasLoaderを使用してActivity名とBody Partを正規化
+
+Body Part別バッチサンプリング:
+- 各バッチは同じBody Part（wrist, hip, chest, leg, head）から構成
+- NHANESなどのラベルなしデータは全バッチに含める（データ不足の補完）
 """
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Iterator
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).resolve().parents[2]
@@ -232,3 +236,131 @@ def collate_hierarchical(batch: List[Dict], samples_per_source: int = 4) -> Opti
         "datasets": all_datasets,
         "body_parts": all_body_parts,
     }
+
+
+class BodyPartBatchSampler(Sampler):
+    """
+    Body Part別バッチサンプラー
+
+    各バッチは同じBody Partから構成。
+    NHANESなどのラベルなしデータ（unlabeled_datasets）は全バッチに含める。
+
+    Args:
+        dataset: HierarchicalSSLDataset
+        batch_size: バッチあたりのファイル数（Body Part分）
+        batches_per_epoch: エポックあたりのバッチ数（Noneなら全データ）
+        unlabeled_datasets: 全バッチに含めるデータセット名のリスト
+        unlabeled_per_batch: 各バッチに含めるラベルなしファイル数
+        seed: ランダムシード
+    """
+
+    # 5つのBody Part
+    BODY_PARTS = ["wrist", "hip", "chest", "leg", "head"]
+
+    def __init__(
+        self,
+        dataset: "HierarchicalSSLDataset",
+        batch_size: int = 8,
+        batches_per_epoch: Optional[int] = 100,
+        unlabeled_datasets: Optional[List[str]] = None,
+        unlabeled_per_batch: int = 2,
+        seed: int = 42,
+    ):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.batches_per_epoch = batches_per_epoch
+        self.unlabeled_datasets = unlabeled_datasets or ["nhanes"]
+        self.unlabeled_per_batch = unlabeled_per_batch
+        self.rng = np.random.RandomState(seed)
+
+        # Body Part別にインデックスを分類
+        self.body_part_indices: Dict[str, List[int]] = {bp: [] for bp in self.BODY_PARTS}
+        self.unlabeled_indices: List[int] = []
+
+        self._build_index()
+
+    def _build_index(self):
+        """サンプルをBody Part別に分類"""
+        for idx, sample in enumerate(self.dataset.samples):
+            _, _, dataset_name, location = sample
+
+            # ラベルなしデータセット
+            if dataset_name.lower() in [d.lower() for d in self.unlabeled_datasets]:
+                self.unlabeled_indices.append(idx)
+                continue
+
+            # Body Partで分類
+            body_part = normalize_body_part(dataset_name, location)
+            if body_part in self.body_part_indices:
+                self.body_part_indices[body_part].append(idx)
+
+    def __iter__(self) -> Iterator[List[int]]:
+        """バッチのインデックスリストを生成"""
+        # 各Body Partのインデックスをシャッフル
+        shuffled_bp_indices = {}
+        for bp, indices in self.body_part_indices.items():
+            if indices:
+                shuffled = self.rng.permutation(indices).tolist()
+                shuffled_bp_indices[bp] = shuffled
+
+        # ラベルなしデータもシャッフル
+        shuffled_unlabeled = self.rng.permutation(self.unlabeled_indices).tolist()
+
+        # バッチを生成
+        batches = []
+        bp_positions = {bp: 0 for bp in self.BODY_PARTS}
+        unlabeled_pos = 0
+
+        # 利用可能なBody Partsをラウンドロビン
+        available_bps = [bp for bp in self.BODY_PARTS if shuffled_bp_indices.get(bp)]
+
+        while available_bps:
+            for bp in available_bps[:]:  # コピーでイテレート
+                indices = shuffled_bp_indices[bp]
+                pos = bp_positions[bp]
+
+                # このBody Partからbatch_size個取得
+                batch_indices = indices[pos:pos + self.batch_size]
+                if len(batch_indices) < self.batch_size // 2:
+                    # データが少なすぎる場合はスキップ
+                    available_bps.remove(bp)
+                    continue
+
+                bp_positions[bp] = pos + len(batch_indices)
+
+                # ラベルなしデータを追加
+                if shuffled_unlabeled and self.unlabeled_per_batch > 0:
+                    n_unlabeled = min(self.unlabeled_per_batch, len(shuffled_unlabeled) - unlabeled_pos)
+                    if n_unlabeled > 0:
+                        unlabeled_batch = shuffled_unlabeled[unlabeled_pos:unlabeled_pos + n_unlabeled]
+                        batch_indices = batch_indices + unlabeled_batch
+                        unlabeled_pos += n_unlabeled
+                        # ラベルなしデータが尽きたら最初から
+                        if unlabeled_pos >= len(shuffled_unlabeled):
+                            unlabeled_pos = 0
+                            shuffled_unlabeled = self.rng.permutation(self.unlabeled_indices).tolist()
+
+                batches.append(batch_indices)
+
+                # 位置が終端に達したらリストから除外
+                if bp_positions[bp] >= len(indices):
+                    available_bps.remove(bp)
+
+        # シャッフルしてバッチ順をランダム化
+        self.rng.shuffle(batches)
+
+        # エポックあたりのバッチ数を制限
+        if self.batches_per_epoch is not None and len(batches) > self.batches_per_epoch:
+            batches = batches[:self.batches_per_epoch]
+
+        for batch in batches:
+            yield batch
+
+    def __len__(self) -> int:
+        """エポックあたりのバッチ数"""
+        if self.batches_per_epoch is not None:
+            return self.batches_per_epoch
+
+        # 全バッチ数を概算
+        total_samples = sum(len(indices) for indices in self.body_part_indices.values())
+        return max(1, total_samples // self.batch_size)

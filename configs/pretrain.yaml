@@ -1,6 +1,54 @@
 # Pre-training Configuration
+# Combined MTL + Hierarchical SSL Training
+# MTL (binary_permute, binary_reverse, binary_timewarp) +
+# Hierarchical SSL (L_complex, L_activity, L_atomic)
 
-# Dataset
+# 階層的SSL設定（MTLと同時に有効で統合モード）
+hierarchical:
+  enabled: true  # 階層的SSLを有効化
+  atlas_path: docs/atlas/activity_mapping.json
+
+# データ設定（階層的データセット用）
+data:
+  data_root: har-unified-dataset/data/processed
+  dataset_location_pairs:
+    # DSADS: 5 body locations
+    - [dsads, Torso]
+    - [dsads, RightArm]
+    - [dsads, LeftArm]
+    - [dsads, RightLeg]
+    - [dsads, LeftLeg]
+    # PAMAP2: 3 body locations
+    - [pamap2, chest]
+    - [pamap2, hand]
+    - [pamap2, ankle]
+    # MHEALTH: 3 body locations
+    - [mhealth, Chest]
+    - [mhealth, LeftAnkle]
+    - [mhealth, RightWrist]
+    # HAR70PLUS: 2 body locations
+    - [har70plus, LowerBack]
+    - [har70plus, RightThigh]
+    # HARTH: 2 body locations
+    - [harth, LowerBack]
+    - [harth, RightThigh]
+    # USCHAD: 1 location
+    - [uschad, Hip]
+
+# Loss設定
+loss:
+  # 階層的SSL Loss重み
+  lambda_complex: 0.1   # Complex Activity Loss (L0) - 小
+  lambda_activity: 0.3  # Activity Loss (L1) - 中
+  lambda_atomic: 0.6    # Atomic Motion Loss (L2) - 大
+  # MTL vs 階層的SSL の重み
+  lambda_mtl: 1.0          # MTL全体の重み
+  lambda_hierarchical: 0.5  # 階層的SSL全体の重み
+  # Prototype設定
+  prototype_dim: 128
+  temperature: 0.1
+
+# Dataset (MTLデータローダー用、統合モードでは使用されないが互換性のため残す)
 dataset_type: "sensor"
 
 sensor_data:
@@ -8,7 +56,7 @@ sensor_data:
   data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
 
   # ウィンドウサイズ設定
-  window_size: 60  # デフォルト: 2.0秒 @ 30Hz（grid_searchでオーバーライド）
+  window_size: 60  # 2.0秒 @ 30Hz（固定）
   original_window_size: 150  # 元データの5.0秒 @ 30Hz
 
   # ウィンドウクリップ設定（5秒→指定サイズへ）
@@ -109,19 +157,16 @@ sensor_data:
 model:
   name: "resnet"
   backbone: "resnet"
-  feature_dim: 256
+  feature_dim: 512  # Resnetのoutput_dim（固定）
   projection_dim: 128
+  sequence_length: 60  # 2.0秒 @ 30Hz
 
 # Multitask Learning
 multitask:
-  enabled: true
-  # SSLタスクの設定
-  # - binary_*: 変換予測タスク（binary_permute, binary_reverse, binary_timewarp）
-  # - masking_*: マスク再構成タスク（masking_channel, masking_time, masking_time_channel）
-  # - contrastive_*: 対照学習タスク（将来拡張用）
-  # - invariant_*: 不変性学習タスク（invariant_orientation: 向き不変性）
-  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp", "invariant_orientation"]
-  task_weights: [1.0, 1.0, 1.0, 1.0] # invariant_orientationの重みを1.0に設定
+  enabled: true  # MTLを有効化（hierarchical.enabledと両方trueで統合モード）
+  # SSLタスクの設定（3タスク）
+  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp"]
+  task_weights: [1.0, 1.0, 1.0]
   apply_prob: 0.5  # binary_*タスクの適用確率
   mask_ratio: 0.15  # masking_*タスクのマスク比率
 
@@ -138,12 +183,14 @@ rotation_augmentation:
 # Training
 training:
   epochs: 100
-  learning_rate: 0.0001  # 継続学習のため学習率を下げる（0.001 → 0.0001）
+  batch_size: 8  # ソース数
+  samples_per_source: 128  # 各ソースから抽出（実際のバッチ = 8 × 128 = 1024）
+  learning_rate: 0.001  # 新規学習
   weight_decay: 0.0001
   optimizer: "adam"
   scheduler: "cosine"
-  warmup_epochs: 5  # 継続学習なのでwarmupを短縮
-  eta_min: 0.00005  # 最小学習率（初期値の1/2）
+  warmup_epochs: 10
+  eta_min: 0.00005  # 最小学習率
   grad_clip_norm: 1.0  # 勾配クリッピング（1.0推奨、無効化する場合はnull）
 
 # Hardware
@@ -168,38 +215,17 @@ wandb:
   job_type: "pretrain"
   entity: null
   name: null
-  tags: ["window_size_experiments", "primitive_discovery"]
-  notes: "Pre-training with multiple window sizes (2.0s, 1.0s, 0.5s) for motion primitive discovery"
+  tags: ["combined_mtl_hierarchical", "3level_loss", "primitive_discovery"]
+  notes: "Combined MTL + Hierarchical SSL training (L_complex, L_activity, L_atomic + binary_permute, binary_reverse, binary_timewarp)"
 
 # Seed
 seed: 42
 
-# Grid Search
-# 実行: python train.py pretrain
-# 回転拡張のAblation Study + ウィンドウサイズ比較
-# 合計: 2（回転あり/なし） × 3（ウィンドウサイズ） = 6実験
-grid_search:
-  sensor_data:
-    # ウィンドウサイズの比較実験（プリミティブ粒度の探索）
-    window_size:
-      #- 15   # 0.5秒 @ 30Hz（アトミックプリミティブ）
-      #- 60   # 2.0秒 @ 30Hz（完全プリミティブ）
-      - 150  # 5.0秒 @ 30Hz（長期プリミティブ）
-
-  rotation_augmentation:
-    # 回転拡張のAblation Study
-    enabled:
-      - false  # Baseline: 回転拡張なし
-      - true   # Proposed: 回転拡張あり
-
-  model:
-    pretrained_path:
-      - null
-  multitask:
-    ssl_tasks:
-      # 既存3タスク + 向き不変性
-      - ["binary_permute", "binary_reverse", "binary_timewarp", "invariant_orientation"]
-
+# Grid Search（無効化 - 統合トレーニングは単一実験）
+# grid_search:
+#   sensor_data:
+#     window_size:
+#       - 60  # 2.0秒 @ 30Hz
 
 settings:
   stop_on_error: false

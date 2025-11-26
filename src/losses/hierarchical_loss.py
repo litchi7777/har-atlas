@@ -165,7 +165,7 @@ class BodyPartPrototypes(nn.Module):
                 valid = candidate_ids[:, i] >= 0  # -1はパディング
                 mask[batch_indices[valid], candidate_ids[valid, i]] = True
 
-            scores = scores.masked_fill(~mask, float("-inf"))
+            scores = scores.masked_fill(~mask, -1e4)  # Half型対応
 
         return F.softmax(scores, dim=1)
 
@@ -233,7 +233,7 @@ class ActivityContrastiveLoss(nn.Module):
         # 対角成分を大きな負値でマスク
         logits_max, _ = sim_matrix.max(dim=1, keepdim=True)
         sim_matrix = sim_matrix - logits_max.detach()
-        sim_matrix = sim_matrix.masked_fill(self_mask.bool(), -1e9)
+        sim_matrix = sim_matrix.masked_fill(self_mask.bool(), -1e4)
 
         # InfoNCE Loss
         exp_sim = torch.exp(sim_matrix)
@@ -417,7 +417,7 @@ class PrototypeContrastiveLoss(nn.Module):
         # 対角成分を大きな負値でマスク
         logits_max, _ = sim_matrix.max(dim=1, keepdim=True)
         sim_matrix = sim_matrix - logits_max.detach()
-        sim_matrix = sim_matrix.masked_fill(self_mask.bool(), -1e9)
+        sim_matrix = sim_matrix.masked_fill(self_mask.bool(), -1e4)
 
         # Weighted InfoNCE Loss
         exp_sim = torch.exp(sim_matrix)
@@ -523,7 +523,7 @@ class AtomicMotionLoss(nn.Module):
                 # 数値安定化
                 logits_max, _ = sim_matrix.max(dim=1, keepdim=True)
                 sim_matrix = sim_matrix - logits_max.detach()
-                sim_matrix = sim_matrix.masked_fill(self_mask.bool(), -1e9)
+                sim_matrix = sim_matrix.masked_fill(self_mask.bool(), -1e4)
 
                 # Weighted InfoNCE Loss
                 exp_sim = torch.exp(sim_matrix)

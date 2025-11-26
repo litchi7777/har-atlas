@@ -1,0 +1,109 @@
+# Combined MTL + Hierarchical SSL Pre-training Configuration
+#
+# MTL (binary_permute, binary_reverse, binary_timewarp) と
+# 階層的SSL (L_complex, L_activity, L_atomic) を同時に学習
+#
+# Usage: python train.py pretrain --config configs/pretrain_combined.yaml
+
+# モード設定（両方有効で統合モード）
+hierarchical:
+  enabled: true  # 階層的SSLを有効化
+  atlas_path: docs/atlas/activity_mapping.json
+
+multitask:
+  enabled: true  # MTLも有効化（統合モードになる）
+  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp"]
+  task_weights: [1.0, 1.0, 1.0]
+  apply_prob: 0.5
+
+# 実験設定
+experiment_dir: experiments/combined
+
+# 基本設定
+seed: 42
+device: cuda
+
+# チェックポイント設定
+checkpoint:
+  save_freq: 10
+
+# データ設定（階層的データセットを使用）
+data:
+  data_root: har-unified-dataset/data/processed
+  dataset_location_pairs:
+    # DSADS: 5 body locations
+    - [dsads, Torso]
+    - [dsads, RightArm]
+    - [dsads, LeftArm]
+    - [dsads, RightLeg]
+    - [dsads, LeftLeg]
+    # PAMAP2: 3 body locations
+    - [pamap2, chest]
+    - [pamap2, hand]
+    - [pamap2, ankle]
+    # MHEALTH: 3 body locations
+    - [mhealth, Chest]
+    - [mhealth, LeftAnkle]
+    - [mhealth, RightWrist]
+    # HAR70PLUS: 2 body locations
+    - [har70plus, LowerBack]
+    - [har70plus, RightThigh]
+    # HARTH: 2 body locations
+    - [harth, LowerBack]
+    - [harth, RightThigh]
+    # USCHAD: 1 location
+    - [uschad, Hip]
+
+# モデル設定
+model:
+  name: "resnet"
+  backbone: "resnet"
+  in_channels: 3
+  sequence_length: 150  # ウィンドウサイズ（30Hz × 5秒）
+  feature_dim: 256  # エンコーダー出力次元
+  projection_dim: 128
+
+# Loss設定
+loss:
+  # 階層的SSL Loss重み
+  lambda_complex: 0.1   # Complex Activity Loss (L0) - 小
+  lambda_activity: 0.3  # Activity Loss (L1) - 中
+  lambda_atomic: 0.6    # Atomic Motion Loss (L2) - 大
+
+  # MTL vs 階層的SSL の重み
+  lambda_mtl: 1.0          # MTL全体の重み
+  lambda_hierarchical: 0.5  # 階層的SSL全体の重み
+
+  # Prototype設定
+  prototype_dim: 128
+  temperature: 0.1
+
+# 訓練設定
+training:
+  epochs: 100
+  batch_size: 8  # ソース数（各ソースから4サンプル抽出）
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: adam
+  scheduler: cosine
+  warmup_epochs: 5
+  grad_clip_norm: 1.0
+
+# Rotation Augmentation（回転拡張）
+rotation_augmentation:
+  enabled: true
+  rotation_type: "random"
+
+# Mixed Precision
+mixed_precision: true
+
+# 評価設定
+evaluation:
+  eval_interval: 1
+
+# W&B設定
+wandb:
+  enabled: false
+  project: har-combined
+  tags: ["combined", "mtl", "hierarchical"]
+  notes: "Combined MTL + Hierarchical SSL training"

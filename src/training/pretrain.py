@@ -40,7 +40,7 @@ from src.data.hierarchical_dataset import (
     collate_hierarchical,
     get_activity_name,
 )
-from src.losses import IntegratedSSLLoss
+from src.losses import IntegratedSSLLoss, CombinedSSLLoss
 from src.losses.hierarchical_loss import HierarchicalSSLLoss
 from src.models.backbones import IntegratedSSLModel, Resnet
 from src.utils.atlas_loader import AtlasLoader
@@ -531,25 +531,31 @@ def setup_hierarchical_dataloaders(
 
     # データローダー作成
     batch_size = config.get("training", {}).get("batch_size", 8)
+    samples_per_source = config.get("training", {}).get("samples_per_source", 32)
+
+    # collate_fn をカリー化して samples_per_source を渡す
+    from functools import partial
+    collate_fn = partial(collate_hierarchical, samples_per_source=samples_per_source)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=collate_hierarchical,
+        collate_fn=collate_fn,
         num_workers=0,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=collate_hierarchical,
+        collate_fn=collate_fn,
         num_workers=0,
     )
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=collate_hierarchical,
+        collate_fn=collate_fn,
         num_workers=0,
     )
 
@@ -902,6 +908,388 @@ def evaluate_hierarchical_epoch(
         "val_activity_loss": activity_loss_meter.avg,
         "val_prototype_loss": prototype_loss_meter.avg,
     }
+
+
+def train_combined_epoch(
+    model: nn.Module,
+    loss_fn: nn.Module,
+    dataloader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    epoch: int,
+    ssl_tasks: List[str],
+    transforms: Dict[str, Any],
+    apply_prob: float,
+    logger,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    grad_clip_norm: Optional[float] = None,
+) -> Dict[str, float]:
+    """MTL + 階層的SSL統合: 1エポック分の学習を実行
+
+    Args:
+        model: IntegratedSSLModel（MTL用）
+        loss_fn: CombinedSSLLoss
+        dataloader: HierarchicalSSLDataset用データローダー
+        optimizer: オプティマイザー
+        device: デバイス
+        epoch: 現在のエポック
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        apply_prob: binary_*タスクの適用確率
+        logger: ロガー
+        scaler: Mixed Precision用
+        grad_clip_norm: 勾配クリッピング
+
+    Returns:
+        平均損失の辞書
+    """
+    model.train()
+    loss_fn.train()
+
+    loss_meter = AverageMeter("Loss")
+    mtl_loss_meter = AverageMeter("MTL")
+    hier_loss_meter = AverageMeter("Hier")
+
+    pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
+    use_amp = scaler is not None
+
+    for batch in pbar:
+        if batch is None:
+            continue
+
+        data = batch["data"].to(device)  # (B, C, T)
+        labels = batch["labels"]  # (B,)
+        datasets = batch["datasets"]  # List[str]
+        body_parts = batch["body_parts"]  # List[str]
+
+        # ラベルからActivity名を取得
+        activity_ids = []
+        for ds, label in zip(datasets, labels.tolist()):
+            activity_name = get_activity_name(ds, label)
+            activity_ids.append(activity_name)
+
+        optimizer.zero_grad()
+
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            # MTL用の拡張を適用
+            task_inputs_dict, labels_dict = apply_augmentations_batch(
+                data, ssl_tasks, transforms, apply_prob, device
+            )
+
+            # MTLタスクの予測を計算
+            predictions = {}
+            labels_for_mtl = {}
+            for task in ssl_tasks:
+                x_task = task_inputs_dict[task]
+
+                if task.startswith("invariant_"):
+                    # Invarianceタスク: 2つのビューを両方エンコード
+                    z1 = model(x_task, task)
+                    x_rotated = labels_dict[task]
+                    z2 = model(x_rotated, task)
+                    predictions[task] = z1
+                    labels_for_mtl[task] = z2
+                else:
+                    pred = model(x_task, task)
+                    predictions[task] = pred
+                    labels_for_mtl[task] = labels_dict[task]
+
+            # 階層的Loss用のembeddings（encoder出力）
+            # 最初のタスクの入力を使ってembeddingsを取得
+            with torch.no_grad():
+                # バックボーンの出力を取得（projection head前）
+                backbone_features = model.backbone(task_inputs_dict[ssl_tasks[0]])
+            # embeddingsは勾配を流すために再計算
+            embeddings = model.backbone(task_inputs_dict[ssl_tasks[0]])
+            # Global Average Pooling
+            if embeddings.dim() == 3:
+                embeddings = embeddings.mean(dim=2)  # (B, C, T) -> (B, C)
+
+            # CombinedSSLLossで両方のLossを計算
+            total_loss, loss_dict = loss_fn(
+                predictions=predictions,
+                labels=labels_for_mtl,
+                embeddings=embeddings,
+                dataset_ids=datasets,
+                activity_ids=activity_ids,
+                body_parts=body_parts,
+            )
+
+        # 逆伝播
+        if use_amp:
+            scaler.scale(total_loss).backward()
+            if grad_clip_norm is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            total_loss.backward()
+            if grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+            optimizer.step()
+
+        # メーター更新
+        batch_size = data.size(0)
+        loss_meter.update(total_loss.item(), batch_size)
+        if "mtl_total" in loss_dict:
+            mtl_loss_meter.update(loss_dict["mtl_total"].item(), batch_size)
+        if "hier_total" in loss_dict:
+            hier_loss_meter.update(loss_dict["hier_total"].item(), batch_size)
+
+        pbar.set_postfix({
+            "loss": f"{loss_meter.avg:.4f}",
+            "mtl": f"{mtl_loss_meter.avg:.4f}",
+            "hier": f"{hier_loss_meter.avg:.4f}",
+        })
+
+    return {
+        "loss": loss_meter.avg,
+        "mtl_loss": mtl_loss_meter.avg,
+        "hier_loss": hier_loss_meter.avg,
+    }
+
+
+def evaluate_combined_epoch(
+    model: nn.Module,
+    loss_fn: nn.Module,
+    dataloader: DataLoader,
+    device: torch.device,
+    ssl_tasks: List[str],
+    transforms: Dict[str, Any],
+    apply_prob: float,
+) -> Dict[str, float]:
+    """MTL + 階層的SSL統合: 検証
+
+    Args:
+        model: IntegratedSSLModel
+        loss_fn: CombinedSSLLoss
+        dataloader: データローダー
+        device: デバイス
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        apply_prob: binary_*タスクの適用確率
+
+    Returns:
+        平均損失の辞書
+    """
+    model.eval()
+    loss_fn.eval()
+
+    loss_meter = AverageMeter("Loss")
+    mtl_loss_meter = AverageMeter("MTL")
+    hier_loss_meter = AverageMeter("Hier")
+
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Validation"):
+            if batch is None:
+                continue
+
+            data = batch["data"].to(device)
+            labels = batch["labels"]
+            datasets = batch["datasets"]
+            body_parts = batch["body_parts"]
+
+            activity_ids = []
+            for ds, label in zip(datasets, labels.tolist()):
+                activity_name = get_activity_name(ds, label)
+                activity_ids.append(activity_name)
+
+            # MTL用の拡張を適用
+            task_inputs_dict, labels_dict = apply_augmentations_batch(
+                data, ssl_tasks, transforms, apply_prob, device
+            )
+
+            # MTLタスクの予測
+            predictions = {}
+            labels_for_mtl = {}
+            for task in ssl_tasks:
+                x_task = task_inputs_dict[task]
+
+                if task.startswith("invariant_"):
+                    z1 = model(x_task, task)
+                    x_rotated = labels_dict[task]
+                    z2 = model(x_rotated, task)
+                    predictions[task] = z1
+                    labels_for_mtl[task] = z2
+                else:
+                    pred = model(x_task, task)
+                    predictions[task] = pred
+                    labels_for_mtl[task] = labels_dict[task]
+
+            # 階層的Loss用のembeddings
+            embeddings = model.backbone(task_inputs_dict[ssl_tasks[0]])
+            if embeddings.dim() == 3:
+                embeddings = embeddings.mean(dim=2)
+
+            # Loss計算
+            total_loss, loss_dict = loss_fn(
+                predictions=predictions,
+                labels=labels_for_mtl,
+                embeddings=embeddings,
+                dataset_ids=datasets,
+                activity_ids=activity_ids,
+                body_parts=body_parts,
+            )
+
+            batch_size = data.size(0)
+            loss_meter.update(total_loss.item(), batch_size)
+            if "mtl_total" in loss_dict:
+                mtl_loss_meter.update(loss_dict["mtl_total"].item(), batch_size)
+            if "hier_total" in loss_dict:
+                hier_loss_meter.update(loss_dict["hier_total"].item(), batch_size)
+
+    return {
+        "val_loss": loss_meter.avg,
+        "val_mtl_loss": mtl_loss_meter.avg,
+        "val_hier_loss": hier_loss_meter.avg,
+    }
+
+
+def run_combined_training_loop(
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+    config: Dict[str, Any],
+    experiment_dirs: ExperimentDirs,
+    device: torch.device,
+    use_wandb: bool,
+    ssl_tasks: List[str],
+    transforms: Dict[str, Any],
+    logger,
+) -> None:
+    """MTL + 階層的SSL統合のトレーニングループ
+
+    Args:
+        model: モデル
+        train_loader: トレーニングデータローダー
+        val_loader: 検証データローダー
+        criterion: CombinedSSLLoss
+        optimizer: オプティマイザー
+        scheduler: スケジューラー
+        config: 設定辞書
+        experiment_dirs: 実験ディレクトリ
+        device: デバイス
+        use_wandb: W&Bを使用するか
+        ssl_tasks: SSLタスクのリスト
+        transforms: 拡張辞書
+        logger: ロガー
+    """
+    best_loss = float("inf")
+    save_path = str(experiment_dirs.checkpoint)
+    num_epochs = config.get("training", {}).get("epochs", 100)
+    eval_interval = config.get("evaluation", {}).get("eval_interval", 1)
+    save_freq = config.get("checkpoint", {}).get("save_freq", 10)
+
+    # Mixed Precision
+    use_amp = config.get("mixed_precision", False) and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+
+    # Gradient Clipping
+    grad_clip_norm = config.get("training", {}).get("grad_clip_norm", None)
+
+    # Apply prob
+    multitask_config = config.get("multitask", {})
+    apply_prob = multitask_config.get("apply_prob", 0.5)
+
+    logger.info("=" * 80)
+    logger.info("Starting Combined MTL + Hierarchical SSL training...")
+    logger.info(f"SSL Tasks: {ssl_tasks}")
+    logger.info("=" * 80)
+
+    for epoch in range(1, num_epochs + 1):
+        logger.info(f"\nEpoch {epoch}/{num_epochs}")
+
+        # 学習
+        train_metrics = train_combined_epoch(
+            model, criterion, train_loader, optimizer, device, epoch,
+            ssl_tasks, transforms, apply_prob, logger, scaler, grad_clip_norm
+        )
+
+        # 検証
+        val_metrics = None
+        if epoch % eval_interval == 0:
+            val_metrics = evaluate_combined_epoch(
+                model, criterion, val_loader, device,
+                ssl_tasks, transforms, apply_prob
+            )
+
+        # ログ
+        logger.info(
+            f"Epoch {epoch} - Train: loss={train_metrics['loss']:.4f}, "
+            f"mtl={train_metrics['mtl_loss']:.4f}, "
+            f"hier={train_metrics['hier_loss']:.4f}"
+        )
+
+        if val_metrics is not None:
+            logger.info(
+                f"Epoch {epoch} - Val: loss={val_metrics['val_loss']:.4f}, "
+                f"mtl={val_metrics['val_mtl_loss']:.4f}, "
+                f"hier={val_metrics['val_hier_loss']:.4f}"
+            )
+
+        # W&Bログ
+        if use_wandb and WANDB_AVAILABLE and wandb.run:
+            log_dict = {
+                "epoch": epoch,
+                "train/loss": train_metrics["loss"],
+                "train/mtl_loss": train_metrics["mtl_loss"],
+                "train/hier_loss": train_metrics["hier_loss"],
+                "train/learning_rate": optimizer.param_groups[0]["lr"],
+            }
+            if val_metrics is not None:
+                log_dict.update({
+                    "val/loss": val_metrics["val_loss"],
+                    "val/mtl_loss": val_metrics["val_mtl_loss"],
+                    "val/hier_loss": val_metrics["val_hier_loss"],
+                })
+            wandb.log(log_dict, step=epoch)
+
+        # ベストモデルの判定
+        current_loss = val_metrics["val_loss"] if val_metrics is not None else train_metrics["loss"]
+
+        # スケジューラー更新
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(current_loss)
+            else:
+                scheduler.step()
+
+        # チェックポイント保存
+        if current_loss < best_loss:
+            best_loss = current_loss
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "loss_fn_state_dict": criterion.state_dict(),
+                "metrics": {"train": train_metrics, "val": val_metrics},
+            }
+            best_file = os.path.join(save_path, "best_model.pth")
+            torch.save(checkpoint, best_file)
+            logger.info(f"New best model saved (loss={best_loss:.4f})")
+
+        # 定期保存
+        if epoch % save_freq == 0:
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "loss_fn_state_dict": criterion.state_dict(),
+                "metrics": {"train": train_metrics, "val": val_metrics},
+            }
+            filename = f"checkpoint_epoch_{epoch}.pth"
+            save_file = os.path.join(save_path, filename)
+            torch.save(checkpoint, save_file)
+            logger.info(f"Checkpoint saved: {filename}")
+
+    logger.info("=" * 80)
+    logger.info("Combined MTL + Hierarchical SSL training completed!")
+    logger.info(f"Best loss: {best_loss:.4f}")
+    logger.info("=" * 80)
 
 
 def train_epoch(
@@ -1858,7 +2246,12 @@ def main(args: argparse.Namespace) -> None:
     multitask_config = config.get("multitask", {})
     use_multitask = multitask_config.get("enabled", False)
 
-    if use_hierarchical:
+    # 統合モード: hierarchical + multitask両方有効
+    use_combined = use_hierarchical and use_multitask
+
+    if use_combined:
+        logger.info("Mode: Combined MTL + Hierarchical SSL")
+    elif use_hierarchical:
         logger.info("Mode: Hierarchical SSL (Activity + Prototype learning)")
     elif use_multitask:
         logger.info("Mode: Multitask SSL")
@@ -1866,9 +2259,99 @@ def main(args: argparse.Namespace) -> None:
         logger.info("Mode: Standard SSL")
 
     # ===============================
-    # 階層的SSLモード
+    # 統合モード（MTL + 階層的SSL）
     # ===============================
-    if use_hierarchical:
+    if use_combined:
+        # データセットとデータローダーを作成（階層的データセットを使用）
+        try:
+            train_loader, val_loader, test_loader, in_channels, sequence_length, atlas = (
+                setup_hierarchical_dataloaders(config, logger)
+            )
+            logger.info(f"Number of batches: {len(train_loader)}")
+        except Exception as e:
+            logger.error(f"Failed to create hierarchical dataset: {e}")
+            raise
+
+        # SSLタスクを取得
+        ssl_tasks = get_ssl_tasks_from_config(config)
+        specific_transforms = create_augmentation_transforms(ssl_tasks, config)
+
+        # モデルを作成（IntegratedSSLModel - MTL用）
+        model = create_model(
+            config, in_channels, sequence_length, True, multitask_config, device, logger
+        )
+
+        # CombinedSSLLossを作成
+        loss_config = config.get("loss", {})
+        criterion = CombinedSSLLoss(
+            ssl_tasks=ssl_tasks,
+            task_weights={task: weight for task, weight in zip(
+                ssl_tasks, multitask_config.get("task_weights", [1.0] * len(ssl_tasks))
+            )},
+            atlas_path=hierarchical_config.get("atlas_path", "docs/atlas/activity_mapping.json"),
+            embed_dim=config.get("model", {}).get("feature_dim", 256),
+            prototype_dim=loss_config.get("prototype_dim", 128),
+            temperature=loss_config.get("temperature", 0.1),
+            lambda_complex=loss_config.get("lambda_complex", 0.1),
+            lambda_activity=loss_config.get("lambda_activity", 0.3),
+            lambda_atomic=loss_config.get("lambda_atomic", 0.6),
+            lambda_mtl=loss_config.get("lambda_mtl", 1.0),
+            lambda_hierarchical=loss_config.get("lambda_hierarchical", 1.0),
+        ).to(device)
+
+        logger.info(f"CombinedSSLLoss created:")
+        logger.info(f"  - SSL tasks: {ssl_tasks}")
+        logger.info(f"  - lambda_mtl: {loss_config.get('lambda_mtl', 1.0)}")
+        logger.info(f"  - lambda_hierarchical: {loss_config.get('lambda_hierarchical', 1.0)}")
+
+        # オプティマイザーを作成（モデル + Loss関数のパラメータ）
+        all_params = list(model.parameters()) + list(criterion.parameters())
+        optimizer_name = config["training"].get("optimizer", "adam").lower()
+        learning_rate = config["training"]["learning_rate"]
+        weight_decay = config["training"].get("weight_decay", 0.0)
+
+        if optimizer_name == "adam":
+            optimizer = torch.optim.Adam(all_params, lr=learning_rate, weight_decay=weight_decay)
+        elif optimizer_name == "adamw":
+            optimizer = torch.optim.AdamW(all_params, lr=learning_rate, weight_decay=weight_decay)
+        elif optimizer_name == "sgd":
+            optimizer = torch.optim.SGD(all_params, lr=learning_rate, weight_decay=weight_decay, momentum=0.9)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+        # スケジューラーを作成
+        scheduler = get_scheduler(
+            optimizer=optimizer,
+            scheduler_name=config["training"].get("scheduler", "cosine"),
+            total_epochs=config["training"]["epochs"],
+            warmup_epochs=config["training"].get("warmup_epochs", 0),
+            T_max=config["training"]["epochs"],
+        )
+
+        # W&Bを初期化
+        use_wandb = init_wandb(config, model)
+
+        # 統合トレーニングループを実行
+        run_combined_training_loop(
+            model,
+            train_loader,
+            val_loader,
+            criterion,
+            optimizer,
+            scheduler,
+            config,
+            experiment_dirs,
+            device,
+            use_wandb,
+            ssl_tasks,
+            specific_transforms,
+            logger,
+        )
+
+    # ===============================
+    # 階層的SSLモード（単体）
+    # ===============================
+    elif use_hierarchical:
         # データセットとデータローダーを作成
         try:
             train_loader, val_loader, test_loader, in_channels, sequence_length, atlas = (

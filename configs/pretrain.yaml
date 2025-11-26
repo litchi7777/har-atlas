@@ -12,7 +12,7 @@ hierarchical:
   samples_per_source: 128  # 各ファイルから取得するサンプル数
   batches_per_epoch: 100  # エポックあたりのバッチ数
   unlabeled_datasets: [nhanes]  # ラベルなしデータセット
-  unlabeled_per_batch: 2  # 各バッチに含めるラベルなしファイル数
+  unlabeled_per_batch: 10  # 各バッチに含めるラベルなしファイル数（50%比率）
 
 # データ設定（統一）
 data:

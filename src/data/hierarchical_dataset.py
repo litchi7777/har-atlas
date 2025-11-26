@@ -261,6 +261,7 @@ class BodyPartBatchSampler(Sampler):
         unlabeled_datasets: 全バッチに含めるデータセット名のリスト
         unlabeled_per_batch: 各バッチに含めるラベルなしファイル数
         seed: ランダムシード
+        allow_oversampling: Trueならバッチ数を満たすためにデータを再利用
     """
 
     # 5つのBody Part
@@ -274,6 +275,7 @@ class BodyPartBatchSampler(Sampler):
         unlabeled_datasets: Optional[List[str]] = None,
         unlabeled_per_batch: int = 2,
         seed: int = 42,
+        allow_oversampling: bool = True,
     ):
         self.dataset = dataset
         self.batch_size = batch_size
@@ -281,6 +283,7 @@ class BodyPartBatchSampler(Sampler):
         self.unlabeled_datasets = unlabeled_datasets or ["nhanes"]
         self.unlabeled_per_batch = unlabeled_per_batch
         self.rng = np.random.RandomState(seed)
+        self.allow_oversampling = allow_oversampling
 
         # Body Part別にインデックスを分類
         self.body_part_indices: Dict[str, List[int]] = {bp: [] for bp in self.BODY_PARTS}
@@ -323,17 +326,34 @@ class BodyPartBatchSampler(Sampler):
         # 利用可能なBody Partsをラウンドロビン
         available_bps = [bp for bp in self.BODY_PARTS if shuffled_bp_indices.get(bp)]
 
-        while available_bps:
+        # オーバーサンプリング時のサイクルカウント
+        bp_cycles = {bp: 0 for bp in self.BODY_PARTS}
+        target_batches = self.batches_per_epoch if self.batches_per_epoch else float('inf')
+
+        while available_bps and len(batches) < target_batches:
             for bp in available_bps[:]:  # コピーでイテレート
+                if len(batches) >= target_batches:
+                    break
+
                 indices = shuffled_bp_indices[bp]
                 pos = bp_positions[bp]
 
                 # このBody Partからbatch_size個取得
                 batch_indices = indices[pos:pos + self.batch_size]
                 if len(batch_indices) < self.batch_size // 2:
-                    # データが少なすぎる場合はスキップ
-                    available_bps.remove(bp)
-                    continue
+                    if self.allow_oversampling and self.batches_per_epoch is not None:
+                        # オーバーサンプリング: データを再シャッフルして最初から
+                        shuffled_bp_indices[bp] = self.rng.permutation(
+                            self.body_part_indices[bp]
+                        ).tolist()
+                        bp_positions[bp] = 0
+                        bp_cycles[bp] += 1
+                        # 次のイテレーションで再取得
+                        continue
+                    else:
+                        # データが少なすぎる場合はスキップ
+                        available_bps.remove(bp)
+                        continue
 
                 bp_positions[bp] = pos + len(batch_indices)
 
@@ -351,14 +371,14 @@ class BodyPartBatchSampler(Sampler):
 
                 batches.append(batch_indices)
 
-                # 位置が終端に達したらリストから除外
-                if bp_positions[bp] >= len(indices):
+                # 位置が終端に達したらリストから除外（オーバーサンプリングなしの場合）
+                if bp_positions[bp] >= len(indices) and not self.allow_oversampling:
                     available_bps.remove(bp)
 
         # シャッフルしてバッチ順をランダム化
         self.rng.shuffle(batches)
 
-        # エポックあたりのバッチ数を制限
+        # エポックあたりのバッチ数を制限（安全のため）
         if self.batches_per_epoch is not None and len(batches) > self.batches_per_epoch:
             batches = batches[:self.batches_per_epoch]
 

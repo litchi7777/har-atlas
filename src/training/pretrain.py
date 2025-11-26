@@ -397,8 +397,9 @@ def setup_batch_dataloaders(
     Returns:
         (train_loader, val_loader, test_loader, in_channels, sequence_length)
     """
-    sensor_config = config["sensor_data"]
-    batch_loader_config = sensor_config["batch_loader"]
+    # dataセクションを使用（sensor_dataは廃止）
+    data_config = config.get("data", {})
+    batch_loader_config = data_config.get("batch_loader", {})
 
     logger.info("Using batch data loader")
 
@@ -419,10 +420,10 @@ def setup_batch_dataloaders(
 
     # データローダー設定を構築
     loader_config = DataLoaderConfig(
-        data_root=sensor_config.get("data_root", DEFAULT_DATA_ROOT),
-        datasets=sensor_config.get("datasets", []),
+        data_root=data_config.get("data_root", DEFAULT_DATA_ROOT),
+        datasets=data_config.get("datasets", []),
         exclude_patterns=batch_loader_config.get("exclude_patterns", []),
-        sample_threshold=batch_loader_config["sample_threshold"],
+        sample_threshold=batch_loader_config.get("sample_threshold", 2000),
         train_num_samples=batch_loader_config.get("train_num_samples", 1000),
         val_num_samples=batch_loader_config.get("val_num_samples", 100),
         test_num_samples=batch_loader_config.get("test_num_samples", 100),
@@ -430,10 +431,10 @@ def setup_batch_dataloaders(
     )
 
     # データパスを収集
-    dataset_location_pairs = sensor_config.get("dataset_location_pairs")
+    dataset_location_pairs = data_config.get("dataset_location_pairs")
     if dataset_location_pairs is None:
         raise ValueError(
-            "dataset_location_pairs is required in sensor_data configuration. "
+            "dataset_location_pairs is required in data configuration. "
             "Example: dataset_location_pairs: [['dsads', 'LeftArm'], ['mhealth', 'chest']]"
         )
 
@@ -445,9 +446,9 @@ def setup_batch_dataloaders(
     )
 
     # ウィンドウクリップ設定を取得
-    window_size = sensor_config.get("window_size")
-    original_window_size = sensor_config.get("original_window_size")
-    window_clip_config = sensor_config.get("window_clip", {})
+    window_size = data_config.get("window_size")
+    original_window_size = data_config.get("original_window_size")
+    window_clip_config = data_config.get("window_clip", {})
     window_clip_strategy = window_clip_config.get("strategy", "random")
 
     # データローダーを作成

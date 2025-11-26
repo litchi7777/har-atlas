@@ -8,31 +8,103 @@ hierarchical:
   enabled: true  # 階層的SSLを有効化
   atlas_path: docs/atlas/activity_mapping.json
 
-# データ設定（階層的データセット用）
+# データ設定（統一）
 data:
   data_root: har-unified-dataset/data/processed
+
+  # ウィンドウサイズ設定
+  window_size: 60  # 2.0秒 @ 30Hz（固定）
+  original_window_size: 150  # 元データの5.0秒 @ 30Hz
+
+  # ウィンドウクリップ設定（5秒→指定サイズへ）
+  window_clip:
+    enabled: true
+    strategy: "random"  # random, center, start, end
+
+  # バッチローダー設定（MTL-onlyモード用）
+  batch_loader:
+    exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
+    sample_threshold: 2000  # 最小サンプル数（1ファイルあたり）
+    batch_size: 4  # 1バッチに含める被験者（ファイル）数
+    train_num_samples: 1000  # エポックあたりのサンプル数
+    val_num_samples: 100
+    test_num_samples: 100
+
+  # データセットとセンサー位置のペア（17データセット × 57ペア）
   dataset_location_pairs:
-    # DSADS: 5 body locations
-    - [dsads, Torso]
-    - [dsads, RightArm]
+    # CHAD (1 locations)
+    - [chad, Pocket]
+    # DSADS (5 locations)
     - [dsads, LeftArm]
-    - [dsads, RightLeg]
     - [dsads, LeftLeg]
-    # PAMAP2: 3 body locations
-    - [pamap2, chest]
-    - [pamap2, hand]
-    - [pamap2, ankle]
-    # MHEALTH: 3 body locations
+    - [dsads, RightArm]
+    - [dsads, RightLeg]
+    - [dsads, Torso]
+    # FORTHTrace (5 locations)
+    - [forthtrace, LeftAnkle]
+    - [forthtrace, LeftWrist]
+    - [forthtrace, RightThigh]
+    - [forthtrace, RightWrist]
+    - [forthtrace, Torso]
+    # HAR70+ (2 locations)
+    - [har70plus, LowerBack]
+    - [har70plus, RightThigh]
+    # HARTH (2 locations)
+    - [harth, LowerBack]
+    - [harth, RightThigh]
+    # HHAR (10 locations)
+    - [hhar, gear_1]
+    - [hhar, gear_2]
+    - [hhar, lgwatch_1]
+    - [hhar, lgwatch_2]
+    - [hhar, nexus4_1]
+    - [hhar, nexus4_2]
+    - [hhar, s3_1]
+    - [hhar, s3_2]
+    - [hhar, s3mini_1]
+    - [hhar, s3mini_2]
+    # LARA (5 locations)
+    - [lara, LeftArm]
+    - [lara, LeftLeg]
+    - [lara, Neck]
+    - [lara, RightArm]
+    - [lara, RightLeg]
+    # MEX (2 locations)
+    - [mex, Thigh]
+    - [mex, Wrist]
+    # MHEALTH (3 locations)
     - [mhealth, Chest]
     - [mhealth, LeftAnkle]
     - [mhealth, RightWrist]
-    # HAR70PLUS: 2 body locations
-    - [har70plus, LowerBack]
-    - [har70plus, RightThigh]
-    # HARTH: 2 body locations
-    - [harth, LowerBack]
-    - [harth, RightThigh]
-    # USCHAD: 1 location
+    # NHANES (1 locations)
+    - [nhanes, PAX]
+    # OPENPACK (4 locations)
+    - [openpack, atr01]
+    - [openpack, atr02]
+    - [openpack, atr03]
+    - [openpack, atr04]
+    # PAAL (1 locations)
+    - [paal, Wrist]
+    # PAMAP2 (3 locations)
+    - [pamap2, ankle]
+    - [pamap2, chest]
+    - [pamap2, hand]
+    # RealDisp (9 locations)
+    - [realdisp, Back]
+    - [realdisp, LeftCalf]
+    - [realdisp, LeftLowerArm]
+    - [realdisp, LeftThigh]
+    - [realdisp, LeftUpperArm]
+    - [realdisp, RightCalf]
+    - [realdisp, RightLowerArm]
+    - [realdisp, RightThigh]
+    - [realdisp, RightUpperArm]
+    # SelfBACK (2 locations)
+    - [selfback, Thigh]
+    - [selfback, Wrist]
+    # TMD (1 locations)
+    - [tmd, Smartphone]
+    # USCHAD (1 locations)
     - [uschad, Hip]
 
 # Loss設定
@@ -47,111 +119,6 @@ loss:
   # Prototype設定
   prototype_dim: 128
   temperature: 0.1
-
-# Dataset (MTLデータローダー用、統合モードでは使用されないが互換性のため残す)
-dataset_type: "sensor"
-
-sensor_data:
-  # データセットの基本設定
-  data_root: "har-unified-dataset/data/processed"  # データルートディレクトリ
-
-  # ウィンドウサイズ設定
-  window_size: 60  # 2.0秒 @ 30Hz（固定）
-  original_window_size: 150  # 元データの5.0秒 @ 30Hz
-
-  # ウィンドウクリップ設定（5秒→指定サイズへ）
-  window_clip:
-    enabled: true
-    strategy: "random"  # random, center, start, end
-
-  # データセットとセンサー位置のペアを指定（必須）
-  # 各ペアは [データセット名, センサー位置] の形式
-  # 全データセット × 全装着位置（回転不変性学習のため全身のデータを使用）
-  dataset_location_pairs:
-    # CHAD (1 locations)
-    - ["chad", "Pocket"]
-    # DSADS (5 locations)
-    - ["dsads", "LeftArm"]
-    - ["dsads", "LeftLeg"]
-    - ["dsads", "RightArm"]
-    - ["dsads", "RightLeg"]
-    - ["dsads", "Torso"]
-    # FORTHTrace (5 locations)
-    - ["forthtrace", "LeftAnkle"]
-    - ["forthtrace", "LeftWrist"]
-    - ["forthtrace", "RightThigh"]
-    - ["forthtrace", "RightWrist"]
-    - ["forthtrace", "Torso"]
-    # HAR70+ (2 locations)
-    - ["har70plus", "LowerBack"]
-    - ["har70plus", "RightThigh"]
-    # HARTH (2 locations)
-    - ["harth", "LowerBack"]
-    - ["harth", "RightThigh"]
-    # HHAR (10 locations)
-    - ["hhar", "gear_1"]
-    - ["hhar", "gear_2"]
-    - ["hhar", "lgwatch_1"]
-    - ["hhar", "lgwatch_2"]
-    - ["hhar", "nexus4_1"]
-    - ["hhar", "nexus4_2"]
-    - ["hhar", "s3_1"]
-    - ["hhar", "s3_2"]
-    - ["hhar", "s3mini_1"]
-    - ["hhar", "s3mini_2"]
-    # LARA (5 locations)
-    - ["lara", "LeftArm"]
-    - ["lara", "LeftLeg"]
-    - ["lara", "Neck"]
-    - ["lara", "RightArm"]
-    - ["lara", "RightLeg"]
-    # MEX (2 locations)
-    - ["mex", "Thigh"]
-    - ["mex", "Wrist"]
-    # MHEALTH (3 locations)
-    - ["mhealth", "Chest"]
-    - ["mhealth", "LeftAnkle"]
-    - ["mhealth", "RightWrist"]
-    # NHANES (1 locations)
-    - ["nhanes", "PAX"]
-    # OPENPACK (4 locations)
-    - ["openpack", "atr01"]
-    - ["openpack", "atr02"]
-    - ["openpack", "atr03"]
-    - ["openpack", "atr04"]
-    # PAAL (1 locations)
-    - ["paal", "Wrist"]
-    # PAMAP2 (3 locations)
-    - ["pamap2", "ankle"]
-    - ["pamap2", "chest"]
-    - ["pamap2", "hand"]
-    # RealDisp (9 locations)
-    - ["realdisp", "Back"]
-    - ["realdisp", "LeftCalf"]
-    - ["realdisp", "LeftLowerArm"]
-    - ["realdisp", "LeftThigh"]
-    - ["realdisp", "LeftUpperArm"]
-    - ["realdisp", "RightCalf"]
-    - ["realdisp", "RightLowerArm"]
-    - ["realdisp", "RightThigh"]
-    - ["realdisp", "RightUpperArm"]
-    # SelfBACK (2 locations)
-    - ["selfback", "Thigh"]
-    - ["selfback", "Wrist"]
-    # TMD (1 locations)
-    - ["tmd", "Smartphone"]
-    # USCHAD (1 locations)
-    - ["uschad", "Hip"]
-    # 合計: 17データセット × 57ペア（19ペア→57ペアに拡張）
-
-  # バッチローダー設定
-  batch_loader:
-    exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
-    sample_threshold: 2000  # 最小サンプル数（1ファイルあたり）
-    batch_size: 4  # 1バッチに含める被験者（ファイル）数
-    train_num_samples: 1000  # エポックあたりのサンプル数
-    val_num_samples: 100
-    test_num_samples: 100
 
 # Model
 model:

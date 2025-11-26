@@ -77,11 +77,8 @@ def validate_config(config: Dict[str, Any], mode: str = "pretrain") -> None:
     # データセットタイプを確認
     dataset_type = config.get("dataset_type", "image")
 
-    # 必須セクションの確認
-    if dataset_type == "sensor":
-        required_sections = ["model", "sensor_data", "training", "device", "seed"]
-    else:
-        required_sections = ["model", "data", "training", "device", "seed"]
+    # 必須セクションの確認（sensor_dataは廃止、dataに統一）
+    required_sections = ["model", "data", "training", "device", "seed"]
 
     for section in required_sections:
         if section not in config:
@@ -90,9 +87,9 @@ def validate_config(config: Dict[str, Any], mode: str = "pretrain") -> None:
     # モデル設定の検証
     validate_model_config(config["model"], mode, dataset_type)
 
-    # データ設定の検証
+    # データ設定の検証（sensor/imageどちらもdata.dataset_location_pairsを使用）
     if dataset_type == "sensor":
-        validate_sensor_data_config(config["sensor_data"], mode)
+        validate_sensor_data_config(config["data"], mode)
     else:
         validate_data_config(config["data"], mode)
 

@@ -472,8 +472,8 @@ class AtomicMotionLoss(nn.Module):
         サンプル → Prototype（Atomic Motion）への割り当てを推定し、
         同じPrototypeに割り当てられたサンプル同士をpositiveとしてContrastive Learning
 
-        ラベルなしデータ（body_part in UNLABELED_BODY_PARTS）は全Body Partで使用。
-        これにより、NHANESの大量データを全Prototypeの学習に活用。
+        ラベルなしデータ（body_part in UNLABELED_BODY_PARTS）は、バッチ内に存在する
+        Body Partでのみ使用。例えばwristバッチならwrist Prototypeのみで学習。
 
         Args:
             embeddings: (batch, embed_dim)
@@ -502,10 +502,13 @@ class AtomicMotionLoss(nn.Module):
             if normalized_bp in self.prototypes.body_parts:
                 bp_groups[normalized_bp].append(i)
 
-        # 各Body Partでラベルなしデータを追加して学習
-        for bp in self.prototypes.body_parts:
+        # バッチ内に存在するBody Partでのみ学習（ラベルなしデータを追加）
+        for bp, labeled_indices in bp_groups.items():
+            if not labeled_indices:
+                continue  # ラベルありデータがないBody Partはスキップ
+
             # ラベルありデータ + ラベルなしデータ
-            indices = bp_groups.get(bp, []) + unlabeled_indices
+            indices = labeled_indices + unlabeled_indices
 
             if len(indices) < 2:
                 continue

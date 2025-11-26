@@ -566,18 +566,33 @@ def setup_hierarchical_dataloaders(
         num_workers=0,
     )
 
-    # Val/Testは従来通り（全データ使用、シャッフルなし）
+    # Val/TestもBodyPartBatchSamplerを使用（Body Part混在を避ける）
+    val_sampler = BodyPartBatchSampler(
+        dataset=val_dataset,
+        batch_size=batch_size,
+        batches_per_epoch=None,  # 全データ使用
+        unlabeled_datasets=unlabeled_datasets,
+        unlabeled_per_batch=unlabeled_per_batch,
+        seed=config.get("seed", 42) + 1,  # 異なるシード
+    )
+    test_sampler = BodyPartBatchSampler(
+        dataset=test_dataset,
+        batch_size=batch_size,
+        batches_per_epoch=None,  # 全データ使用
+        unlabeled_datasets=unlabeled_datasets,
+        unlabeled_per_batch=unlabeled_per_batch,
+        seed=config.get("seed", 42) + 2,  # 異なるシード
+    )
+
     val_loader = DataLoader(
         val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
+        batch_sampler=val_sampler,
         collate_fn=collate_fn,
         num_workers=0,
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
+        batch_sampler=test_sampler,
         collate_fn=collate_fn,
         num_workers=0,
     )
@@ -2248,8 +2263,8 @@ def main(args: argparse.Namespace) -> None:
         config_copy_path = experiment_dirs.root / "config.yaml"
         shutil.copy(args.config, config_copy_path)
 
-    # ロガーをセットアップ（コンソール出力のみ、run_experiments.pyがexperiment.logに保存）
-    logger = setup_logger("pretrain", console_only=True)
+    # ロガーをセットアップ（ファイルとコンソール両方に出力）
+    logger = setup_logger("pretrain", log_dir=str(experiment_dirs.root), log_file="experiment.log")
     logger.info(f"Experiment directory: {experiment_dirs.root}")
     logger.info(f"Configuration loaded from {args.config}")
     logger.info(f"Starting pre-training with config: {config['model']['name']}")

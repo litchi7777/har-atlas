@@ -3067,5 +3067,284 @@
         }
       }
     }
+  },
+  "utdmhad_arm": {
+    "body_parts": ["wrist"],
+    "activities": {
+      "swipeleft": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W03_rotation_pronation", "W04_push_forward"]
+        }
+      },
+      "swiperight": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W03_rotation_pronation", "W04_push_forward"]
+        }
+      },
+      "wave": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W03_rotation_pronation", "W08_vibration_high"]
+        }
+      },
+      "clap": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W04_push_forward", "W08_vibration_high"]
+        }
+      },
+      "throw": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W02_swing_fast", "W04_push_forward"]
+        }
+      },
+      "armcross": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W04_push_forward", "W14_stationary"]
+        }
+      },
+      "basketballshoot": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W02_swing_fast", "W04_push_forward", "W07_lift_raise"]
+        }
+      },
+      "drawx": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W01_swing_slow", "W03_rotation_pronation"]
+        }
+      },
+      "drawcirclecw": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W03_rotation_pronation", "W01_swing_slow"]
+        }
+      },
+      "drawcircleccw": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W03_rotation_pronation", "W01_swing_slow"]
+        }
+      },
+      "drawtriangle": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W01_swing_slow", "W03_rotation_pronation"]
+        }
+      },
+      "bowling": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W02_swing_fast", "W04_push_forward"]
+        }
+      },
+      "boxing": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W04_push_forward", "W08_vibration_high"]
+        }
+      },
+      "baseballswing": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W02_swing_fast", "W03_rotation_pronation"]
+        }
+      },
+      "tennisswing": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W02_swing_fast", "W03_rotation_pronation"]
+        }
+      },
+      "armcurl": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_lift_raise", "W01_swing_slow"]
+        }
+      },
+      "tennisserve": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W02_swing_fast", "W07_lift_raise"]
+        }
+      },
+      "push": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W04_push_forward"]
+        }
+      },
+      "knock": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W08_vibration_high", "W03_rotation_pronation"]
+        }
+      },
+      "catch": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W05_grip_tight", "W04_push_forward"]
+        }
+      },
+      "pickupandthrow": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": ["W07_lift_raise", "W02_swing_fast"]
+        }
+      }
+    }
+  },
+  "utdmhad_leg": {
+    "body_parts": ["leg"],
+    "activities": {
+      "jog": {
+        "level": 1,
+        "atomic_motions": {
+          "leg": ["L02_step_run", "L06_knee_flex"]
+        }
+      },
+      "walk": {
+        "level": 1,
+        "atomic_motions": {
+          "leg": ["L01_step_walk", "L06_knee_flex"]
+        }
+      },
+      "sittostand": {
+        "level": 1,
+        "atomic_motions": {
+          "leg": ["L06_knee_flex", "L14_weight_shift"]
+        }
+      },
+      "standtosit": {
+        "level": 1,
+        "atomic_motions": {
+          "leg": ["L06_knee_flex", "L14_weight_shift"]
+        }
+      },
+      "lunge": {
+        "level": 1,
+        "atomic_motions": {
+          "leg": ["L01_step_walk", "L06_knee_flex", "L14_weight_shift"]
+        }
+      },
+      "squat": {
+        "level": 1,
+        "atomic_motions": {
+          "leg": ["L06_knee_flex", "L14_weight_shift"]
+        }
+      }
+    }
+  },
+  "unimib": {
+    "body_parts": ["hip"],
+    "activities": {
+      "standingupfromsitting": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H05_sit_stand", "H07_vertical_osc"]
+        }
+      },
+      "standingupfromlaying": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H05_sit_stand", "H07_vertical_osc"]
+        }
+      },
+      "walking": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H01_gait_slow", "H07_vertical_osc", "H08_lateral_sway"]
+        }
+      },
+      "running": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H02_gait_fast", "H07_vertical_osc"]
+        }
+      },
+      "goingupstairs": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H03_step_up", "H07_vertical_osc"]
+        }
+      },
+      "jumping": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H09_jump_launch", "H10_jump_land"]
+        }
+      },
+      "goingdownstairs": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H04_step_down", "H07_vertical_osc"]
+        }
+      },
+      "lyingdownfromstanding": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H05_sit_stand", "H16_stationary"]
+        }
+      },
+      "sittingdown": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H05_sit_stand", "H16_stationary"]
+        }
+      },
+      "fallingforward": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H10_jump_land", "H15_fall_impact"]
+        }
+      },
+      "fallingright": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H10_jump_land", "H15_fall_impact"]
+        }
+      },
+      "fallingbackward": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H10_jump_land", "H15_fall_impact"]
+        }
+      },
+      "fallinghittingobstacle": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H13_bump_impact", "H15_fall_impact"]
+        }
+      },
+      "fallingwithprotection": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H10_jump_land", "H15_fall_impact"]
+        }
+      },
+      "fallingbackwardsittingchair": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H05_sit_stand", "H15_fall_impact"]
+        }
+      },
+      "syncope": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H15_fall_impact"]
+        }
+      },
+      "fallingleft": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": ["H10_jump_land", "H15_fall_impact"]
+        }
+      }
+    }
   }
 }

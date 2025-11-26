@@ -263,6 +263,15 @@
     },
     "capture24": {
       "Wrist": "wrist"
+    },
+    "utdmhad_arm": {
+      "RightWrist": "wrist"
+    },
+    "utdmhad_leg": {
+      "RightThigh": "thigh"
+    },
+    "unimib": {
+      "Pocket": "hip"
     }
   },
 

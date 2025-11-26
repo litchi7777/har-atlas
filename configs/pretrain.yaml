@@ -25,7 +25,7 @@ data:
   # ウィンドウクリップ設定（5秒→指定サイズへ）
   window_clip:
     enabled: true
-    strategy: "random"  # random, center, start, end
+    strategy: "start"  # random, center, start, end
 
   # バッチローダー設定（MTL-onlyモード用）
   batch_loader:
@@ -110,8 +110,14 @@ data:
     - [selfback, Wrist]
     # TMD (1 locations)
     - [tmd, Smartphone]
+    # UniMiB (1 location)
+    - [unimib, Pocket]
     # USCHAD (1 locations)
     - [uschad, Hip]
+    # UTD-MHAD ARM (1 location)
+    - [utdmhad_arm, RightWrist]
+    # UTD-MHAD LEG (1 location)
+    - [utdmhad_leg, RightThigh]
 
 # Loss設定
 loss:
@@ -167,7 +173,7 @@ training:
   grad_clip_norm: 1.0  # 勾配クリッピング（1.0推奨、無効化する場合はnull）
 
 # Hardware
-device: "cuda:3"
+device: "cuda:0"
 mixed_precision: true
 
 # Checkpointing

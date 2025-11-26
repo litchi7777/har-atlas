@@ -1,0 +1,37 @@
+# Zeroshot Activity Recognition Evaluation
+# 学習済みPrototypeを使ったゼロショット行動認識評価
+
+# チェックポイント（最新のものを指定）
+checkpoint: experiments/pretrain/run_20251126_092559/checkpoints/checkpoint_epoch_70.pth
+
+# データ設定
+data:
+  data_root: har-unified-dataset/data/processed
+
+  # 評価対象データセット（nullで全データセット）
+  # 特定のデータセットのみ評価する場合はリストで指定
+  target_datasets: null  # [dsads, mhealth, pamap2]
+
+  # サンプル数
+  samples_per_file: 100
+
+# 評価モード
+evaluation:
+  # all: 全データセットで評価
+  # lodo: Leave-One-Dataset-Out（学習時に除外したデータセットで評価）
+  # cross_location: 同じデータセット内で異なるセンサー位置での評価
+  mode: all
+
+  # 動的Activityのみ評価（静的Activity: sitting, lying, standingを除外）
+  dynamic_only: false
+
+# Atlas
+atlas_path: docs/atlas/activity_mapping.json
+
+# Hardware
+device: cuda
+
+# 出力
+output:
+  save_results: true
+  output_dir: experiments/zeroshot

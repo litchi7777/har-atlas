@@ -48,6 +48,14 @@ def map_location_to_category(location):
     if 'atr03' in location_lower or 'atr04' in location_lower:
         return 'Arm'
 
+    # HHARデバイス名（スマートウォッチとスマートフォン）
+    # gear, lgwatch = Samsung Gear / LG Watch（スマートウォッチ）→ Wrist
+    if any(kw in location_lower for kw in ['gear_', 'lgwatch_']):
+        return 'Wrist'
+    # nexus4, s3, s3mini = スマートフォン → Phone
+    if any(kw in location_lower for kw in ['nexus4_', 's3_', 's3mini_']):
+        return 'Phone'
+
     # Wrist（優先度高）
     if 'wrist' in location_lower:
         return 'Wrist'
@@ -87,6 +95,18 @@ def map_location_to_category(location):
 cached_data = {}
 
 
+def clear_cache(model_name=None):
+    """キャッシュをクリア"""
+    global cached_data
+    if model_name:
+        if model_name in cached_data:
+            del cached_data[model_name]
+            print(f"Cleared cache for {model_name}")
+    else:
+        cached_data = {}
+        print("Cleared all cache")
+
+
 def get_available_models():
     """利用可能なモデル一覧を取得"""
     data_dir = Path(__file__).parent / "data"
@@ -113,6 +133,7 @@ def load_features(model_name='5.0s'):
         metadata: メタデータ辞書
         sensor_data: 生センサーデータ (N, 3, window_size) or None
         tsne_embeddings: 事前計算されたt-SNE埋め込み (N, 2) or None
+        prototype_data: プロトタイプ情報 (embeddings, metadata) or None
     """
     data_dir = Path(__file__).parent / "data"
 
@@ -144,9 +165,25 @@ def load_features(model_name='5.0s'):
     if tsne_embeddings is not None:
         print(f"  Loaded precomputed t-SNE embeddings: {tsne_embeddings.shape}")
 
+    # プロトタイプが存在すれば読み込む
+    prototype_embeddings = data.get('prototype_embeddings', None)
+    prototype_features = data.get('prototype_features', None)
+
     print(f"Loading metadata from {metadata_path}")
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
+
+    # プロトタイプメタデータ
+    prototype_data = None
+    if prototype_embeddings is not None and 'prototypes' in metadata:
+        prototype_data = {
+            'embeddings': prototype_embeddings,
+            'features': prototype_features,
+            'body_parts': metadata['prototypes']['body_parts'],
+            'prototype_ids': metadata['prototypes']['prototype_ids'],
+            'atomic_motion_names': metadata['prototypes'].get('atomic_motion_names', metadata['prototypes']['prototype_ids'])
+        }
+        print(f"  Loaded prototypes: {len(prototype_embeddings)} prototypes")
 
     # Locationをカテゴリ化（古いデータ互換性のため）
     if 'locations' in metadata:
@@ -157,10 +194,10 @@ def load_features(model_name='5.0s'):
     if 'body_parts' not in metadata and 'locations' in metadata:
         metadata['body_parts'] = metadata['locations']
 
-    # キャッシュに保存（t-SNE埋め込みも含む）
-    cached_data[model_name] = (features, metadata, sensor_data, tsne_embeddings)
+    # キャッシュに保存（プロトタイプも含む）
+    cached_data[model_name] = (features, metadata, sensor_data, tsne_embeddings, prototype_data)
 
-    return features, metadata, sensor_data, tsne_embeddings
+    return features, metadata, sensor_data, tsne_embeddings, prototype_data
 
 
 def apply_filters(features, metadata, selected_datasets=None, selected_activities=None, selected_locations=None):
@@ -214,7 +251,8 @@ def apply_filters(features, metadata, selected_datasets=None, selected_activitie
 
 
 def create_plotly_figure(embedded, metadata, color_by='dataset',
-                         selected_datasets=None, selected_activities=None, selected_locations=None):
+                         selected_datasets=None, selected_activities=None, selected_locations=None,
+                         prototype_data=None, show_prototypes=True):
     """
     Plotly図を作成（全データ表示、選択されたものをハイライト）
 
@@ -225,6 +263,8 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
         selected_datasets: 選択されたデータセットのリスト
         selected_activities: 選択されたアクティビティのリスト
         selected_locations: 選択されたlocationのリスト
+        prototype_data: プロトタイプデータ (embeddings, body_parts, prototype_ids) or None
+        show_prototypes: プロトタイプを表示するかどうか
 
     Returns:
         fig: Plotly Figure オブジェクト
@@ -395,6 +435,63 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
     print(f"  Total highlighted: {total_highlighted}")
     print(f"  Total traces added: {len(fig.data)}")
 
+    # プロトタイプを追加（存在する場合）
+    if show_prototypes and prototype_data is not None:
+        proto_embeddings = prototype_data['embeddings']
+        proto_body_parts = prototype_data['body_parts']
+        proto_ids = prototype_data['prototype_ids']
+        proto_names = prototype_data.get('atomic_motion_names', proto_ids)
+
+        print(f"\n[DEBUG] Adding {len(proto_embeddings)} prototypes")
+
+        # Body part ごとの色（星マーカー用）
+        proto_colors = {
+            'wrist': '#e74c3c',   # 赤
+            'leg': '#2ecc71',     # 緑
+            'hip': '#3498db',     # 青
+            'chest': '#f39c12',   # オレンジ
+            'head': '#9b59b6',    # 紫
+        }
+
+        # Body partごとにプロトタイプを追加
+        unique_body_parts = sorted(set(proto_body_parts))
+        for bp in unique_body_parts:
+            bp_mask = np.array(proto_body_parts) == bp
+            bp_indices = np.where(bp_mask)[0]
+
+            if len(bp_indices) == 0:
+                continue
+
+            bp_embeddings = proto_embeddings[bp_indices]
+            bp_names = [proto_names[i] for i in bp_indices]
+
+            hover_texts = [
+                f"<b>🌟 {name}</b><br>"
+                f"Body Part: {bp}<br>"
+                f"X: {bp_embeddings[i, 0]:.2f}<br>"
+                f"Y: {bp_embeddings[i, 1]:.2f}"
+                for i, name in enumerate(bp_names)
+            ]
+
+            fig.add_trace(go.Scattergl(
+                x=bp_embeddings[:, 0].tolist(),
+                y=bp_embeddings[:, 1].tolist(),
+                mode='markers',
+                marker=dict(
+                    size=15,
+                    color=proto_colors.get(bp, '#95a5a6'),
+                    symbol='star',
+                    line=dict(width=2, color='white')
+                ),
+                name=f'Proto: {bp}',
+                hovertext=hover_texts,
+                hoverinfo='text',
+                legendgroup='prototypes',
+                legendgrouptitle_text='Prototypes'
+            ))
+
+        print(f"  Added {len(unique_body_parts)} prototype groups")
+
     # レイアウト設定
     fig.update_layout(
         title='Embedding Space Visualization',
@@ -448,7 +545,7 @@ def get_metadata(window_size):
     """メタデータを取得"""
     try:
         print(f"[get_metadata] Loading metadata for window_size: {window_size}")
-        _, metadata, _, _ = load_features(window_size)
+        _, metadata, _, _, prototype_data = load_features(window_size)
 
         print(f"[get_metadata] Metadata keys: {list(metadata.keys())}")
         print(f"[get_metadata] Total datasets entries: {len(metadata.get('datasets', []))}")
@@ -482,7 +579,8 @@ def get_metadata(window_size):
             'datasets': unique_datasets,
             'activities_by_dataset': activities_by_dataset,
             'locations': unique_locations,
-            'total_samples': len(metadata['datasets'])  # メタデータから動的に計算
+            'total_samples': len(metadata['datasets']),  # メタデータから動的に計算
+            'has_prototypes': prototype_data is not None
         }
 
         print(f"[get_metadata] Response: {len(unique_datasets)} datasets, {len(unique_locations)} locations, {len(metadata['datasets'])} total samples")
@@ -507,9 +605,10 @@ def visualize():
         selected_datasets = params.get('selected_datasets', None)
         selected_activities = params.get('selected_activities', None)
         selected_locations = params.get('selected_locations', None)
+        show_prototypes = params.get('show_prototypes', True)  # プロトタイプ表示オプション
 
         # データ読み込み（全データ）
-        features, metadata, sensor_data, tsne_embeddings = load_features(model_name)
+        features, metadata, sensor_data, tsne_embeddings, prototype_data = load_features(model_name)
 
         print(f"Total samples: {len(features)}")
 
@@ -535,7 +634,9 @@ def visualize():
             color_by=color_by,
             selected_datasets=selected_datasets,
             selected_activities=selected_activities,
-            selected_locations=selected_locations
+            selected_locations=selected_locations,
+            prototype_data=prototype_data,
+            show_prototypes=show_prototypes
         )
 
         # ハイライトされたサンプル数を計算
@@ -590,7 +691,7 @@ def get_sensor_data():
         print(f"  Point index: {point_index}")
 
         # キャッシュからデータ取得
-        features, metadata, sensor_data, _ = load_features(model_name)
+        features, metadata, sensor_data, _, _ = load_features(model_name)
 
         if sensor_data is None:
             return jsonify({'error': 'Sensor data not available. Please re-run extract_model_features.py with updated version.'}), 404

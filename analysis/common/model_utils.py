@@ -68,7 +68,7 @@ def load_pretrained_model(
     window_size: Optional[int] = None,
     device: str = 'cuda',
     n_channels: int = 3,
-    hidden_dim: int = 256,
+    hidden_dim: Optional[int] = None,
     ssl_tasks: Optional[list] = None,
 ) -> Tuple[torch.nn.Module, int]:
     """
@@ -79,7 +79,7 @@ def load_pretrained_model(
         window_size: ウィンドウサイズ（Noneの場合は自動検出）
         device: 'cuda' or 'cpu'
         n_channels: 入力チャンネル数
-        hidden_dim: 隠れ層の次元数
+        hidden_dim: 隠れ層の次元数（Noneの場合はチェックポイントから自動検出）
         ssl_tasks: SSLタスクのリスト
 
     Returns:
@@ -103,6 +103,19 @@ def load_pretrained_model(
 
     # チェックポイント読み込み
     checkpoint = torch.load(model_path, map_location=device)
+
+    # hidden_dimの自動検出（チェックポイントの重みから推定）
+    if hidden_dim is None:
+        state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
+        # task_heads.binary_permute.0.weight の形状から hidden_dim を推定
+        for key in state_dict:
+            if 'task_heads' in key and '.0.weight' in key:
+                hidden_dim = state_dict[key].shape[0]
+                print(f"  Detected hidden_dim from checkpoint: {hidden_dim}")
+                break
+        if hidden_dim is None:
+            hidden_dim = 512  # デフォルト
+            print(f"  Using default hidden_dim: {hidden_dim}")
 
     # バックボーン作成
     backbone = Resnet(

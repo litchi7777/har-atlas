@@ -264,6 +264,12 @@ def categorize_body_part(location: str) -> str:
     """
     location_lower = location.lower()
 
+    # HHAR デバイス名（優先度高）- すべてPhone（ポケット/手持ち）として扱う
+    hhar_devices = ['gear_1', 'gear_2', 'lgwatch_1', 'lgwatch_2',
+                    'nexus4_1', 'nexus4_2', 's3_1', 's3_2', 's3mini_1', 's3mini_2']
+    if location_lower in hhar_devices or location in hhar_devices:
+        return 'Phone'
+
     # Wrist（優先度高）
     if 'wrist' in location_lower or 'atr01' in location_lower or 'atr02' in location_lower:
         return 'Wrist'

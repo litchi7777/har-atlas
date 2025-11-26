@@ -28,7 +28,7 @@ def setup_plotting_style(style: str = 'whitegrid', context: str = 'paper', font_
 
 def reduce_dimensions(
     features: np.ndarray,
-    method: Literal['umap', 'tsne', 'pca'] = 'umap',
+    method: Literal['tsne', 'pca'] = 'tsne',
     n_components: int = 2,
     **kwargs
 ) -> np.ndarray:
@@ -37,7 +37,7 @@ def reduce_dimensions(
 
     Args:
         features: 特徴量 (N, D)
-        method: 次元削減手法 ('umap', 'tsne', 'pca')
+        method: 次元削減手法 ('tsne', 'pca')
         n_components: 削減後の次元数
         **kwargs: 各手法固有のパラメータ
 
@@ -46,18 +46,7 @@ def reduce_dimensions(
     """
     print(f"Reducing dimensions using {method.upper()}...")
 
-    if method == 'umap':
-        import umap
-        reducer = umap.UMAP(
-            n_components=n_components,
-            n_neighbors=kwargs.get('n_neighbors', 15),
-            min_dist=kwargs.get('min_dist', 0.1),
-            metric=kwargs.get('metric', 'cosine'),
-            random_state=kwargs.get('random_state', 42)
-        )
-        embedded = reducer.fit_transform(features)
-
-    elif method == 'tsne':
+    if method == 'tsne':
         from sklearn.manifold import TSNE
         reducer = TSNE(
             n_components=n_components,

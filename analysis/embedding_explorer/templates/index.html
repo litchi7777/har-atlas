@@ -281,7 +281,7 @@
     </div>
 
     <script>
-        let currentModel = '5.0s';  // Default model
+        let currentModel = null;  // No model selected by default
         let allDatasets = [];
         let allActivities = [];
         let allLocations = [];
@@ -295,6 +295,14 @@
                 const modelSelect = document.getElementById('modelSelect');
                 modelSelect.innerHTML = '';
 
+                // Add placeholder option
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = '-- Select a model --';
+                placeholder.disabled = true;
+                placeholder.selected = true;
+                modelSelect.appendChild(placeholder);
+
                 data.models.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model;
@@ -302,14 +310,8 @@
                     modelSelect.appendChild(option);
                 });
 
-                // Set default model
-                if (data.models.length > 0) {
-                    currentModel = data.models[0];
-                    modelSelect.value = currentModel;
-
-                    // Load metadata for default model
-                    loadMetadata(currentModel);
-                }
+                // Show instruction message instead of auto-loading
+                showInstruction('Select a model and click "Apply Model" to visualize embeddings.');
             })
             .catch(error => {
                 console.error('Failed to load models:', error);
@@ -319,6 +321,12 @@
         // Apply model button
         document.getElementById('applyModelBtn').addEventListener('click', function() {
             const selectedModel = document.getElementById('modelSelect').value;
+
+            if (!selectedModel) {
+                showInstruction('Please select a model first.');
+                return;
+            }
+
             currentModel = selectedModel;
             console.log('Applying model:', currentModel);
 
@@ -640,6 +648,14 @@
         function showError(message) {
             document.getElementById('plot').innerHTML =
                 `<div class="error">❌ Error: ${message}</div>`;
+        }
+
+        function showInstruction(message) {
+            document.getElementById('plot').innerHTML =
+                `<div style="text-align: center; padding: 100px; color: #666;">
+                    <div style="font-size: 48px; margin-bottom: 20px;">📊</div>
+                    <div style="font-size: 18px;">${message}</div>
+                </div>`;
         }
 
         function setupActivitySearch() {

@@ -85,10 +85,10 @@ data:
     # NHANES (1 locations)
     - [nhanes, PAX]
     # OPENPACK (4 locations)
-    - [openpack, atr01]
-    - [openpack, atr02]
-    - [openpack, atr03]
-    - [openpack, atr04]
+    - [openpack, RightWrist]
+    - [openpack, LeftWrist]
+    - [openpack, RightUpperArm]
+    - [openpack, LeftUpperArm]
     # PAAL (1 locations)
     - [paal, Wrist]
     # PAMAP2 (3 locations)

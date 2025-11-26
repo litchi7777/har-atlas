@@ -174,7 +174,17 @@
       "Wrist": "wrist"
     },
     "hhar": {
-      "Smartphone": "hip"
+      "Smartphone": "hip",
+      "gear_1": "wrist",
+      "gear_2": "wrist",
+      "lgwatch_1": "wrist",
+      "lgwatch_2": "wrist",
+      "nexus4_1": "hip",
+      "nexus4_2": "hip",
+      "s3_1": "hip",
+      "s3_2": "hip",
+      "s3mini_1": "hip",
+      "s3mini_2": "hip"
     },
     "motionsense": {
       "Pocket": "hip"

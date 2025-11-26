@@ -441,7 +441,14 @@ class AtomicMotionLoss(nn.Module):
     - PiCOでサンプル → Atomic Motion（Prototype）への割り当てを推定
     - 同じAtomic Motionに割り当てられたサンプル同士をpositive
     - Activity間の類似度ではなく、サンプル単位の割り当て結果でpositive判定
+
+    ラベルなしデータの扱い:
+    - NHANESなどのラベルなしデータは全Body PartのPrototypeに対して学習
+    - Body Partが不明（"pax", "unknown"等）の場合、全Body Partで使用
     """
+
+    # ラベルなしデータのBody Part識別子
+    UNLABELED_BODY_PARTS = {"pax", "unknown", ""}
 
     def __init__(
         self,
@@ -465,6 +472,9 @@ class AtomicMotionLoss(nn.Module):
         サンプル → Prototype（Atomic Motion）への割り当てを推定し、
         同じPrototypeに割り当てられたサンプル同士をpositiveとしてContrastive Learning
 
+        ラベルなしデータ（body_part in UNLABELED_BODY_PARTS）は全Body Partで使用。
+        これにより、NHANESの大量データを全Prototypeの学習に活用。
+
         Args:
             embeddings: (batch, embed_dim)
             body_parts: Body Part名のリスト
@@ -476,14 +486,27 @@ class AtomicMotionLoss(nn.Module):
         loss_dict = {}
         losses = []
 
-        # Body Partごとにグループ化
+        # ラベルなしサンプルのインデックスを特定
+        unlabeled_indices = []
+        for i, bp in enumerate(body_parts):
+            normalized_bp = self.atlas._normalize_body_part(bp)
+            if normalized_bp.lower() in self.UNLABELED_BODY_PARTS:
+                unlabeled_indices.append(i)
+
+        # Body Partごとにグループ化（ラベルありのみ）
         bp_groups = defaultdict(list)
         for i, bp in enumerate(body_parts):
+            if i in unlabeled_indices:
+                continue  # ラベルなしは後で追加
             normalized_bp = self.atlas._normalize_body_part(bp)
             if normalized_bp in self.prototypes.body_parts:
                 bp_groups[normalized_bp].append(i)
 
-        for bp, indices in bp_groups.items():
+        # 各Body Partでラベルなしデータを追加して学習
+        for bp in self.prototypes.body_parts:
+            # ラベルありデータ + ラベルなしデータ
+            indices = bp_groups.get(bp, []) + unlabeled_indices
+
             if len(indices) < 2:
                 continue
 
@@ -624,6 +647,10 @@ class HierarchicalSSLLoss(nn.Module):
 
         self.temperature = temperature
 
+    # ラベルなしデータのActivity識別子（"unknown"で始まるものも含む）
+    UNLABELED_ACTIVITY_PREFIXES = ("unknown",)
+    UNLABELED_ACTIVITY_IDS = {"", "null", "none"}
+
     def forward(
         self,
         embeddings: torch.Tensor,
@@ -636,36 +663,69 @@ class HierarchicalSSLLoss(nn.Module):
         Args:
             embeddings: (batch, embed_dim) エンコーダー出力
             dataset_ids: (batch,) データセット名のリスト
-            activity_ids: (batch,) Activity名のリスト
+            activity_ids: (batch,) Activity名のリスト（"unknown"はラベルなし）
             body_parts: (batch,) Body Part名のリスト
             activity_labels: (batch,) Activity ID（整数、省略時はactivity_idsから生成）
 
         Returns:
-            (total_loss, {"complex": loss, "simple": loss, "atomic": loss, ...})
+            (total_loss, {"complex": loss, "activity": loss, "atomic": loss, ...})
+
+        Note:
+            ラベルなしデータ（activity_ids == "unknown" 等）は:
+            - L_complex, L_activity: スキップ（Activity名が必要なため）
+            - L_atomic: 使用（PiCOはラベル不要）
         """
         batch_size = embeddings.size(0)
         device = embeddings.device
 
-        # Dataset IDを整数に変換
-        unique_datasets = list(set(dataset_ids))
-        dataset_to_idx = {d: i for i, d in enumerate(unique_datasets)}
-        dataset_labels = torch.tensor(
-            [dataset_to_idx[d] for d in dataset_ids],
-            dtype=torch.long,
-            device=device,
-        )
+        # ラベルありデータのインデックスを特定
+        def is_labeled(act: str) -> bool:
+            if act is None:
+                return False
+            act_lower = act.lower()
+            if act_lower in self.UNLABELED_ACTIVITY_IDS:
+                return False
+            if act_lower.startswith(self.UNLABELED_ACTIVITY_PREFIXES):
+                return False
+            return True
+
+        labeled_indices = [i for i, act in enumerate(activity_ids) if is_labeled(act)]
 
         loss_dict = {}
 
-        # 1. Complex Activity Loss (L_complex) - 同じComplex Activity + 同じデータセット
-        loss_complex = self.complex_loss_fn(embeddings, activity_ids, dataset_labels)
-        loss_dict["complex"] = loss_complex
+        # 1-2. L_complex, L_activity: ラベルありデータのみ
+        if len(labeled_indices) >= 2:
+            labeled_embeddings = embeddings[labeled_indices]
+            labeled_activity_ids = [activity_ids[i] for i in labeled_indices]
+            labeled_dataset_ids = [dataset_ids[i] for i in labeled_indices]
 
-        # 2. Activity Loss (L_activity) - 同じActivity + 同じデータセット
-        loss_activity = self.activity_loss_fn(embeddings, activity_ids, dataset_labels)
+            # Dataset IDを整数に変換
+            unique_datasets = list(set(labeled_dataset_ids))
+            dataset_to_idx = {d: i for i, d in enumerate(unique_datasets)}
+            labeled_dataset_labels = torch.tensor(
+                [dataset_to_idx[d] for d in labeled_dataset_ids],
+                dtype=torch.long,
+                device=device,
+            )
+
+            # 1. Complex Activity Loss (L_complex) - 同じComplex Activity + 同じデータセット
+            loss_complex = self.complex_loss_fn(
+                labeled_embeddings, labeled_activity_ids, labeled_dataset_labels
+            )
+
+            # 2. Activity Loss (L_activity) - 同じActivity + 同じデータセット
+            loss_activity = self.activity_loss_fn(
+                labeled_embeddings, labeled_activity_ids, labeled_dataset_labels
+            )
+        else:
+            # ラベルありデータが2未満の場合はスキップ
+            loss_complex = embeddings.sum() * 0.0
+            loss_activity = embeddings.sum() * 0.0
+
+        loss_dict["complex"] = loss_complex
         loss_dict["activity"] = loss_activity
 
-        # 3. Atomic Motion Loss (L_atomic) - PiCOで同じPrototype → positive
+        # 3. Atomic Motion Loss (L_atomic) - PiCOで同じPrototype → positive（全データ使用）
         loss_atomic, atomic_details = self.atomic_loss_fn(embeddings, body_parts)
         loss_dict["atomic"] = loss_atomic
         loss_dict.update(atomic_details)

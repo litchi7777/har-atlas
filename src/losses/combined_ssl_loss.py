@@ -47,6 +47,7 @@ class CombinedSSLLoss(nn.Module):
         task_weights: Optional[Dict[str, float]] = None,
         # 階層的Loss設定
         atlas_path: str = "docs/atlas/activity_mapping.json",
+        atomic_motions_path: str = None,
         embed_dim: int = 512,
         prototype_dim: int = 128,
         temperature: float = 0.1,
@@ -62,6 +63,7 @@ class CombinedSSLLoss(nn.Module):
             ssl_tasks: SSLタスクのリスト (binary_*, invariant_*)
             task_weights: 各タスクの重み
             atlas_path: Activity Atlasへのパス
+            atomic_motions_path: atomic_motions.jsonへのパス（Noneの場合はatlas_pathと同じディレクトリから読み込む）
             embed_dim: エンコーダー出力次元
             prototype_dim: Prototype空間の次元
             temperature: Contrastive Loss温度
@@ -83,6 +85,7 @@ class CombinedSSLLoss(nn.Module):
         # Hierarchical Loss
         self.hierarchical_loss = HierarchicalSSLLoss(
             atlas_path=atlas_path,
+            atomic_motions_path=atomic_motions_path,
             embed_dim=embed_dim,
             prototype_dim=prototype_dim,
             temperature=temperature,

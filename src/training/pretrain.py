@@ -500,7 +500,8 @@ def setup_hierarchical_dataloaders(
 
     # Atlas読み込み
     atlas_path = hierarchical_config.get("atlas_path", "docs/atlas/activity_mapping.json")
-    atlas = AtlasLoader(atlas_path)
+    atomic_motions_path = hierarchical_config.get("atomic_motions_path", None)
+    atlas = AtlasLoader(atlas_path, atomic_motions_path=atomic_motions_path)
     logger.info(f"Atlas loaded: {len(atlas.get_datasets())} datasets")
 
     # データセット設定
@@ -2328,6 +2329,7 @@ def main(args: argparse.Namespace) -> None:
                 ssl_tasks, multitask_config.get("task_weights", [1.0] * len(ssl_tasks))
             )},
             atlas_path=hierarchical_config.get("atlas_path", "docs/atlas/activity_mapping.json"),
+            atomic_motions_path=hierarchical_config.get("atomic_motions_path", None),
             embed_dim=config.get("model", {}).get("feature_dim", 256),
             prototype_dim=loss_config.get("prototype_dim", 128),
             temperature=loss_config.get("temperature", 0.1),

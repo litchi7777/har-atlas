@@ -1,6 +1,7 @@
 hierarchical:
   enabled: true
-  atlas_path: docs/atlas/activity_mapping.json
+  atlas_path: docs/atlas/activity_mapping_v2.json
+  atomic_motions_path: docs/atlas/atomic_motions_v2.json
   batch_size: 10
   samples_per_source: 128
   batches_per_epoch: 100

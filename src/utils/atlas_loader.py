@@ -58,14 +58,16 @@ class AtlasLoader:
     # 正規化されたBody Partカテゴリ（学習用）
     NORMALIZED_BODY_PARTS = ["wrist", "hip", "chest", "leg", "head"]
 
-    def __init__(self, atlas_path: str):
+    def __init__(self, atlas_path: str, atomic_motions_path: str = None):
         """
         Args:
             atlas_path: activity_mapping.json へのパス
-                       （同じディレクトリからatomic_motions.json, body_part_taxonomy.jsonも読み込む）
+                       （同じディレクトリからbody_part_taxonomy.jsonも読み込む）
+            atomic_motions_path: atomic_motions.jsonへのパス（Noneの場合はatlas_pathと同じディレクトリから読み込む）
         """
         self.atlas_path = Path(atlas_path)
         self.atlas_dir = self.atlas_path.parent
+        self.atomic_motions_path = Path(atomic_motions_path) if atomic_motions_path else None
         self.atlas = self._load_atlas()
 
         # 追加のAtlasファイルを読み込み
@@ -97,7 +99,12 @@ class AtlasLoader:
 
     def _load_atomic_motions(self) -> Dict:
         """atomic_motions.jsonを読み込む"""
-        atomic_path = self.atlas_dir / "atomic_motions.json"
+        # 明示的にパスが指定されている場合はそれを使用
+        if self.atomic_motions_path is not None:
+            atomic_path = self.atomic_motions_path
+        else:
+            atomic_path = self.atlas_dir / "atomic_motions.json"
+
         if not atomic_path.exists():
             return {}
 
@@ -260,8 +267,10 @@ class AtlasLoader:
                 if normalized_bp not in mapping:
                     mapping[normalized_bp] = {}
 
+                # メタデータ（_で始まるキー）を除外
+                actual_motions = {k: v for k, v in motions.items() if not k.startswith('_')}
                 # 各motionにIDを割り当て
-                sorted_motions = sorted(motions.keys())
+                sorted_motions = sorted(actual_motions.keys())
                 for idx, motion in enumerate(sorted_motions):
                     mapping[normalized_bp][motion] = idx
 
@@ -360,7 +369,9 @@ class AtlasLoader:
                 normalized_bp = self._normalize_body_part(body_part)
                 if normalized_bp not in counts:
                     counts[normalized_bp] = 0
-                counts[normalized_bp] += len(motions)
+                # メタデータ（_で始まるキー）を除外してカウント
+                actual_motions = {k: v for k, v in motions.items() if not k.startswith('_')}
+                counts[normalized_bp] += len(actual_motions)
 
             self._prototype_counts = counts
             return self._prototype_counts

@@ -686,6 +686,8 @@ class HierarchicalSSLLoss(nn.Module):
         # 後方互換性のため旧パラメータも受け付ける
         lambda_simple: float = None,
         lambda_prototype: float = None,
+        # atomic_motions.jsonパス（v2対応）
+        atomic_motions_path: str = None,
     ):
         """
         Args:
@@ -696,11 +698,12 @@ class HierarchicalSSLLoss(nn.Module):
             lambda_complex: Complex Activity Loss重み (λ0) - 小
             lambda_activity: Activity Loss重み (λ1) - 中
             lambda_atomic: Atomic Motion Loss重み (λ2) - 大
+            atomic_motions_path: atomic_motions.jsonへのパス（Noneの場合はatlas_pathと同じディレクトリから読み込む）
         """
         super().__init__()
 
         # Atlas読み込み
-        self.atlas = AtlasLoader(atlas_path)
+        self.atlas = AtlasLoader(atlas_path, atomic_motions_path=atomic_motions_path)
 
         # Body Part設定
         self.body_parts = AtlasLoader.NORMALIZED_BODY_PARTS

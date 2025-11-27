@@ -181,7 +181,8 @@ def load_features(model_name='5.0s'):
             'features': prototype_features,
             'body_parts': metadata['prototypes']['body_parts'],
             'prototype_ids': metadata['prototypes']['prototype_ids'],
-            'atomic_motion_names': metadata['prototypes'].get('atomic_motion_names', metadata['prototypes']['prototype_ids'])
+            'atomic_motion_names': metadata['prototypes'].get('atomic_motion_names', metadata['prototypes']['prototype_ids']),
+            'atomic_motion_descriptions_ja': metadata['prototypes'].get('atomic_motion_descriptions_ja', [])
         }
         print(f"  Loaded prototypes: {len(prototype_embeddings)} prototypes")
 
@@ -441,6 +442,7 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
         proto_body_parts = prototype_data['body_parts']
         proto_ids = prototype_data['prototype_ids']
         proto_names = prototype_data.get('atomic_motion_names', proto_ids)
+        proto_descriptions_ja = prototype_data.get('atomic_motion_descriptions_ja', [])
 
         print(f"\n[DEBUG] Adding {len(proto_embeddings)} prototypes")
 
@@ -464,14 +466,19 @@ def create_plotly_figure(embedded, metadata, color_by='dataset',
 
             bp_embeddings = proto_embeddings[bp_indices]
             bp_names = [proto_names[i] for i in bp_indices]
+            bp_descriptions_ja = [proto_descriptions_ja[i] if i < len(proto_descriptions_ja) else "" for i in bp_indices]
 
-            hover_texts = [
-                f"<b>🌟 {name}</b><br>"
-                f"Body Part: {bp}<br>"
-                f"X: {bp_embeddings[i, 0]:.2f}<br>"
-                f"Y: {bp_embeddings[i, 1]:.2f}"
-                for i, name in enumerate(bp_names)
-            ]
+            hover_texts = []
+            for i, name in enumerate(bp_names):
+                desc_ja = bp_descriptions_ja[i] if bp_descriptions_ja[i] else ""
+                desc_line = f"<i>{desc_ja}</i><br>" if desc_ja else ""
+                hover_texts.append(
+                    f"<b>🌟 {name}</b><br>"
+                    f"{desc_line}"
+                    f"Body Part: {bp}<br>"
+                    f"X: {bp_embeddings[i, 0]:.2f}<br>"
+                    f"Y: {bp_embeddings[i, 1]:.2f}"
+                )
 
             fig.add_trace(go.Scattergl(
                 x=bp_embeddings[:, 0].tolist(),

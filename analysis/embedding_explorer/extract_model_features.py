@@ -404,8 +404,18 @@ def main():
         for bp in atomic_motion_names:
             print(f"    {bp}: {len(atomic_motion_names[bp])} motions")
 
+        # 日本語説明を読み込み（atomic_motions_ja.json）
+        atomic_motion_descriptions_ja = {}  # {motion_code: 日本語説明}
+        ja_atlas_path = project_root / 'docs' / 'atlas' / 'atomic_motions_ja.json'
+        if ja_atlas_path.exists():
+            with open(ja_atlas_path, 'r', encoding='utf-8') as f:
+                ja_atlas = json.load(f)
+            for bp, motions in ja_atlas.get('atomic_motions', {}).items():
+                atomic_motion_descriptions_ja.update(motions)
+            print(f"  Loaded {len(atomic_motion_descriptions_ja)} Japanese descriptions")
+
         proto_list = []
-        proto_meta = {'body_parts': [], 'prototype_ids': [], 'atomic_motion_names': []}
+        proto_meta = {'body_parts': [], 'prototype_ids': [], 'atomic_motion_names': [], 'atomic_motion_descriptions_ja': []}
         for bp, proto_array in prototypes.items():
             proto_list.append(proto_array)
             for i in range(len(proto_array)):
@@ -417,6 +427,9 @@ def main():
                     motion_name = f"{bp}_{i}"
                 proto_meta['prototype_ids'].append(f"{bp}_{i}")
                 proto_meta['atomic_motion_names'].append(motion_name)
+                # 日本語説明を追加
+                description_ja = atomic_motion_descriptions_ja.get(motion_name, "")
+                proto_meta['atomic_motion_descriptions_ja'].append(description_ja)
         prototype_features = np.vstack(proto_list)
         prototype_metadata = proto_meta
         print(f"  Total prototypes: {len(prototype_features)}")

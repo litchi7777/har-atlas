@@ -1,216 +1,245 @@
-# Pre-training Configuration
-# Combined MTL + Hierarchical SSL Training
-# MTL (binary_permute, binary_reverse, binary_timewarp) +
-# Hierarchical SSL (L_complex, L_activity, L_atomic)
-
-# 階層的SSL設定（MTLと同時に有効で統合モード）
 hierarchical:
-  enabled: true  # 階層的SSLを有効化
+  enabled: true
   atlas_path: docs/atlas/activity_mapping.json
-  # Body Part別バッチサンプラー設定
-  batch_size: 10  # 1バッチに含めるファイル数（同じBody Partから）
-  samples_per_source: 128  # 各ファイルから取得するサンプル数
-  batches_per_epoch: 100  # エポックあたりのバッチ数
-  unlabeled_datasets: [nhanes]  # ラベルなしデータセット
-  unlabeled_per_batch: 10  # 各バッチに含めるラベルなしファイル数（50%比率）
-
-# データ設定（統一）
+  batch_size: 10
+  samples_per_source: 128
+  batches_per_epoch: 100
+  unlabeled_datasets:
+  - nhanes
+  unlabeled_per_batch: 10
 data:
   data_root: har-unified-dataset/data/processed
-
-  # ウィンドウサイズ設定
-  window_size: 60  # 2.0秒 @ 30Hz（固定）
-  original_window_size: 150  # 元データの5.0秒 @ 30Hz
-
-  # ウィンドウクリップ設定（5秒→指定サイズへ）
+  window_size: 60
+  original_window_size: 150
   window_clip:
     enabled: true
-    strategy: "start"  # random, center, start, end
-
-  # バッチローダー設定（MTL-onlyモード用）
+    strategy: start
   batch_loader:
-    exclude_patterns: []  # 除外パターン（例: ["USER00001"]）
-    sample_threshold: 2000  # 最小サンプル数（1ファイルあたり）
-    batch_size: 4  # 1バッチに含める被験者（ファイル）数
-    train_num_samples: 1000  # エポックあたりのサンプル数
+    exclude_patterns: []
+    sample_threshold: 2000
+    batch_size: 4
+    train_num_samples: 1000
     val_num_samples: 100
     test_num_samples: 100
-
-  # データセットとセンサー位置のペア（17データセット × 57ペア）
   dataset_location_pairs:
-    # CHAD (1 locations)
-    - [chad, Pocket]
-    # DSADS (5 locations)
-    - [dsads, LeftArm]
-    - [dsads, LeftLeg]
-    - [dsads, RightArm]
-    - [dsads, RightLeg]
-    - [dsads, Torso]
-    # FORTHTrace (5 locations)
-    - [forthtrace, LeftAnkle]
-    - [forthtrace, LeftWrist]
-    - [forthtrace, RightThigh]
-    - [forthtrace, RightWrist]
-    - [forthtrace, Torso]
-    # HAR70+ (2 locations)
-    - [har70plus, LowerBack]
-    - [har70plus, RightThigh]
-    # HARTH (2 locations)
-    - [harth, LowerBack]
-    - [harth, RightThigh]
-    # HHAR (10 locations)
-    - [hhar, gear_1]
-    - [hhar, gear_2]
-    - [hhar, lgwatch_1]
-    - [hhar, lgwatch_2]
-    - [hhar, nexus4_1]
-    - [hhar, nexus4_2]
-    - [hhar, s3_1]
-    - [hhar, s3_2]
-    - [hhar, s3mini_1]
-    - [hhar, s3mini_2]
-    # LARA (5 locations)
-    - [lara, LeftArm]
-    - [lara, LeftLeg]
-    - [lara, Neck]
-    - [lara, RightArm]
-    - [lara, RightLeg]
-    # MEX (2 locations)
-    - [mex, Thigh]
-    - [mex, Wrist]
-    # MHEALTH (3 locations)
-    - [mhealth, Chest]
-    - [mhealth, LeftAnkle]
-    - [mhealth, RightWrist]
-    # NHANES (1 locations)
-    - [nhanes, PAX]
-    # OPENPACK (4 locations)
-    - [openpack, RightWrist]
-    - [openpack, LeftWrist]
-    - [openpack, RightUpperArm]
-    - [openpack, LeftUpperArm]
-    # PAAL (1 locations)
-    - [paal, Wrist]
-    # PAMAP2 (3 locations)
-    - [pamap2, ankle]
-    - [pamap2, chest]
-    - [pamap2, hand]
-    # RealDisp (9 locations)
-    - [realdisp, Back]
-    - [realdisp, LeftCalf]
-    - [realdisp, LeftLowerArm]
-    - [realdisp, LeftThigh]
-    - [realdisp, LeftUpperArm]
-    - [realdisp, RightCalf]
-    - [realdisp, RightLowerArm]
-    - [realdisp, RightThigh]
-    - [realdisp, RightUpperArm]
-    # SelfBACK (2 locations)
-    - [selfback, Thigh]
-    - [selfback, Wrist]
-    # TMD (1 locations)
-    - [tmd, Smartphone]
-    # UniMiB (1 location)
-    - [unimib, Pocket]
-    # USCHAD (1 locations)
-    - [uschad, Hip]
-    # UTD-MHAD ARM (1 location)
-    - [utdmhad_arm, RightWrist]
-    # UTD-MHAD LEG (1 location)
-    - [utdmhad_leg, RightThigh]
-
-# Loss設定
+  - - chad
+    - Pocket
+  - - dsads
+    - LeftArm
+  - - dsads
+    - LeftLeg
+  - - dsads
+    - RightArm
+  - - dsads
+    - RightLeg
+  - - dsads
+    - Torso
+  - - forthtrace
+    - LeftAnkle
+  - - forthtrace
+    - LeftWrist
+  - - forthtrace
+    - RightThigh
+  - - forthtrace
+    - RightWrist
+  - - forthtrace
+    - Torso
+  - - har70plus
+    - LowerBack
+  - - har70plus
+    - RightThigh
+  - - harth
+    - LowerBack
+  - - harth
+    - RightThigh
+  - - hhar
+    - gear_1
+  - - hhar
+    - gear_2
+  - - hhar
+    - lgwatch_1
+  - - hhar
+    - lgwatch_2
+  - - hhar
+    - nexus4_1
+  - - hhar
+    - nexus4_2
+  - - hhar
+    - s3_1
+  - - hhar
+    - s3_2
+  - - hhar
+    - s3mini_1
+  - - hhar
+    - s3mini_2
+  - - lara
+    - LeftArm
+  - - lara
+    - LeftLeg
+  - - lara
+    - Neck
+  - - lara
+    - RightArm
+  - - lara
+    - RightLeg
+  - - mex
+    - Thigh
+  - - mex
+    - Wrist
+  - - mhealth
+    - Chest
+  - - mhealth
+    - LeftAnkle
+  - - mhealth
+    - RightWrist
+  - - nhanes
+    - PAX
+  - - openpack
+    - RightWrist
+  - - openpack
+    - LeftWrist
+  - - openpack
+    - RightUpperArm
+  - - openpack
+    - LeftUpperArm
+  - - paal
+    - Wrist
+  - - pamap2
+    - ankle
+  - - pamap2
+    - chest
+  - - pamap2
+    - hand
+  - - realdisp
+    - Back
+  - - realdisp
+    - LeftCalf
+  - - realdisp
+    - LeftLowerArm
+  - - realdisp
+    - LeftThigh
+  - - realdisp
+    - LeftUpperArm
+  - - realdisp
+    - RightCalf
+  - - realdisp
+    - RightLowerArm
+  - - realdisp
+    - RightThigh
+  - - realdisp
+    - RightUpperArm
+  - - selfback
+    - Thigh
+  - - selfback
+    - Wrist
+  - - tmd
+    - Smartphone
+  - - unimib
+    - Pocket
+  - - uschad
+    - Hip
+  - - utdmhad_arm
+    - RightWrist
+  - - utdmhad_leg
+    - RightThigh
+  - - hmp
+    - RightWrist
+  - - imsb
+    - Wrist
+  - - imsb
+    - Neck
+  - - imwsha
+    - Chest
+  - - imwsha
+    - Thigh
+  - - imwsha
+    - Wrist
+  - - motionsense
+    - Pocket
+  - - sbrhapt
+    - Waist
+  - - ward
+    - LeftArm
+  - - ward
+    - RightArm
+  - - ward
+    - LeftAnkle
+  - - ward
+    - RightAnkle
+  - - ward
+    - Waist
+  - - capture24
+    - Wrist
 loss:
-  # 階層的SSL Loss重み
-  lambda_complex: 0.1   # Complex Activity Loss (L0) - 小
-  lambda_activity: 0.3  # Activity Loss (L1) - 中
-  lambda_atomic: 0.6    # Atomic Motion Loss (L2) - 大
-  # MTL vs 階層的SSL の重み
-  lambda_mtl: 1.0          # MTL全体の重み
-  lambda_hierarchical: 0.5  # 階層的SSL全体の重み
-  # Prototype設定
+  lambda_complex: 0.1
+  lambda_activity: 0.3
+  lambda_atomic: 0.6
+  lambda_mtl: 1.0
+  lambda_hierarchical: 0.5
   prototype_dim: 128
   temperature: 0.1
-
-# Model
 model:
-  name: "resnet"
-  backbone: "resnet"
-  feature_dim: 512  # Resnetのoutput_dim（固定）
+  name: resnet
+  backbone: resnet
+  feature_dim: 512
   projection_dim: 128
-  sequence_length: 60  # 2.0秒 @ 30Hz
-
-# Multitask Learning
+  sequence_length: 60
 multitask:
-  enabled: true  # MTLを有効化（hierarchical.enabledと両方trueで統合モード）
-  # SSLタスクの設定（3タスク）
-  ssl_tasks: ["binary_permute", "binary_reverse", "binary_timewarp"]
-  task_weights: [1.0, 1.0, 1.0]
-  apply_prob: 0.5  # binary_*タスクの適用確率
-  mask_ratio: 0.15  # masking_*タスクのマスク比率
-
-# Data Augmentation
+  enabled: true
+  ssl_tasks:
+  - binary_permute
+  - binary_reverse
+  - binary_timewarp
+  task_weights:
+  - 1.0
+  - 1.0
+  - 1.0
+  apply_prob: 0.5
+  mask_ratio: 0.15
 augmentation:
-  enabled: false  # データ拡張を無効化（シンプル化のため）
-  # mode: "mtl"  # light, medium, heavy, mtl
-
-# Rotation Augmentation（回転拡張）
+  enabled: false
 rotation_augmentation:
-  enabled: true  # すべてのSSLタスクに回転拡張を適用（バッチ内の偏り解消）
-  rotation_type: "random"  # random: SO(3)完全ランダム, gravity_preserving: Z軸保持
-
-# Training
+  enabled: true
+  rotation_type: random
 training:
   epochs: 100
-  batch_size: 8  # ソース数
-  samples_per_source: 128  # 各ソースから抽出（実際のバッチ = 8 × 128 = 1024）
-  learning_rate: 0.001  # 新規学習
+  batch_size: 8
+  samples_per_source: 128
+  learning_rate: 0.001
   weight_decay: 0.0001
-  optimizer: "adam"
-  scheduler: "cosine"
+  optimizer: adam
+  scheduler: cosine
   warmup_epochs: 10
-  eta_min: 0.00005  # 最小学習率
-  grad_clip_norm: 1.0  # 勾配クリッピング（1.0推奨、無効化する場合はnull）
-
-# Hardware
-device: "cuda:0"
+  eta_min: 5.0e-05
+  grad_clip_norm: 1.0
+device: cuda:1
 mixed_precision: true
-
-# Checkpointing
 checkpoint:
   save_freq: 10
-
-# Early Stopping
 early_stopping:
-  enabled: false  # Early Stoppingを有効化（長時間学習時に推奨）
-  patience: 20    # 改善が見られないエポック数
-  min_delta: 0.001  # 改善と見なす最小変化量
-
-# Weights & Biases
+  enabled: false
+  patience: 20
+  min_delta: 0.001
 wandb:
   enabled: true
-  project: "har-foundation"
-  group: null  # 自動生成（job_type + タイムスタンプ）。手動設定も可能
-  job_type: "pretrain"
+  project: har-foundation
+  group: null
+  job_type: pretrain
   entity: null
   name: null
-  tags: ["combined_mtl_hierarchical", "3level_loss", "primitive_discovery"]
-  notes: "Combined MTL + Hierarchical SSL training (L_complex, L_activity, L_atomic + binary_permute, binary_reverse, binary_timewarp)"
-
-# Seed
+  tags:
+  - combined_mtl_hierarchical
+  - 3level_loss
+  - primitive_discovery
+  notes: Combined MTL + Hierarchical SSL training (L_complex, L_activity, L_atomic
+    + binary_permute, binary_reverse, binary_timewarp)
 seed: 42
-
-# Grid Search（無効化 - 統合トレーニングは単一実験）
-# grid_search:
-#   sensor_data:
-#     window_size:
-#       - 60  # 2.0秒 @ 30Hz
-
 settings:
   stop_on_error: false
   save_summary: true
-  # summary_pathを指定しない場合、自動的にexperiments/*/run_*/summary.jsonに保存される
-  parallel: true  # GPU並列実行
-  experiments_per_gpu: 1  # 1つのGPUで同時実行する実験数（Pretrainは1推奨）
-  max_workers: null  # nullの場合は available_gpus × experiments_per_gpu で自動計算
-  available_gpus: [2,3]  # 使用するGPUのリスト（例: [0, 1, 3]で複数GPU指定可能）
+  parallel: true
+  experiments_per_gpu: 1
+  max_workers: null
+  available_gpus:
+  - 2
+  - 3

@@ -77,6 +77,7 @@ def load_sensor_data(
     max_samples_per_class: Optional[int] = None,
     exclude_negative_labels: bool = True,
     max_users: Optional[int] = None,
+    user_ids: Optional[List[int]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Dict]:
     """
     指定されたデータセット・部位のセンサーデータを読み込む
@@ -88,6 +89,7 @@ def load_sensor_data(
         max_samples_per_class: 各クラスから取得する最大サンプル数（Noneで全て）
         exclude_negative_labels: 負のラベルを除外するか
         max_users: 最大ユーザー数（大規模データセット用、Noneで全て）
+        user_ids: 使用するユーザーIDのリスト（例: [1, 2]でテストユーザーのみ）
 
     Returns:
         X: センサーデータ (N, 3, T)
@@ -107,8 +109,21 @@ def load_sensor_data(
     if not x_paths:
         raise FileNotFoundError(f"No X.npy files found for pattern: {pattern}")
 
+    # 特定のユーザーIDのみ使用
+    if user_ids is not None:
+        import re
+        filtered_paths = []
+        for p in x_paths:
+            # パスからユーザーIDを抽出（例: USER1, USER02, user_1 など）
+            match = re.search(r'[Uu][Ss][Ee][Rr]_?(\d+)', p)
+            if match:
+                uid = int(match.group(1))
+                if uid in user_ids:
+                    filtered_paths.append(p)
+        print(f"  [INFO] Using users {user_ids}: {len(filtered_paths)} out of {len(x_paths)} for {dataset_name}/{location}")
+        x_paths = filtered_paths
     # 大規模データセットは最初のN人のみ使用
-    if max_users is not None and len(x_paths) > max_users:
+    elif max_users is not None and len(x_paths) > max_users:
         print(f"  [INFO] Using {max_users} out of {len(x_paths)} users for {dataset_name}/{location}")
         x_paths = x_paths[:max_users]
 

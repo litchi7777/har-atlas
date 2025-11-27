@@ -187,6 +187,8 @@ def main():
                         help='特定のデータセットのみ（例: dsads mhealth）')
     parser.add_argument('--locations', nargs='+', default=None,
                         help='特定の身体部位のみ（例: Wrist Hip）')
+    parser.add_argument('--user-ids', nargs='+', type=int, default=None,
+                        help='使用するユーザーID（例: --user-ids 1 2 でテストユーザーのみ）')
 
     args = parser.parse_args()
 
@@ -283,7 +285,8 @@ def main():
                 location=location_name,
                 window_size=window_size,
                 max_samples_per_class=args.max_samples,
-                max_users=args.max_users
+                max_users=args.max_users,
+                user_ids=args.user_ids
             )
 
             # アクティビティ名のマッピングを取得
@@ -386,33 +389,20 @@ def main():
     if args.feature_space == 'projected' and prototypes:
         print(f"\n[3.5/5] Preparing prototypes for t-SNE...")
 
-        # Atlasからatomic motion名を取得
+        # AtlasLoaderを使用してatomic motion名を取得（学習時と同じマッピング）
+        from src.utils.atlas_loader import AtlasLoader
         atlas_path = project_root / 'docs' / 'atlas' / 'activity_mapping.json'
+        atlas_loader = AtlasLoader(str(atlas_path))
+        atomic_to_id = atlas_loader.get_atomic_motion_to_id()
+
+        # ID -> 名前の逆変換マッピングを作成
         atomic_motion_names = {}  # {body_part: {index: name}}
+        for bp, motion_dict in atomic_to_id.items():
+            atomic_motion_names[bp] = {idx: name for name, idx in motion_dict.items()}
 
-        if atlas_path.exists():
-            with open(atlas_path, 'r') as f:
-                atlas = json.load(f)
-
-            # 各body partのユニークなatomic motionを収集
-            for bp in ['wrist', 'chest', 'leg', 'hip', 'head']:
-                motions = set()
-                for dataset, data in atlas.items():
-                    if dataset in ['version', 'description', 'note']:
-                        continue
-                    activities = data.get('activities', {})
-                    for activity, info in activities.items():
-                        for bp_key, motion_list in info.get('atomic_motions', {}).items():
-                            if bp_key == bp:
-                                motions.update(motion_list)
-
-                # ソートしてインデックス付け（プロトタイプのインデックスに対応）
-                sorted_motions = sorted(motions)
-                atomic_motion_names[bp] = {i: name for i, name in enumerate(sorted_motions)}
-
-            print(f"  Loaded atomic motion names from Atlas")
-            for bp in atomic_motion_names:
-                print(f"    {bp}: {len(atomic_motion_names[bp])} motions")
+        print(f"  Loaded atomic motion names from AtlasLoader")
+        for bp in atomic_motion_names:
+            print(f"    {bp}: {len(atomic_motion_names[bp])} motions")
 
         proto_list = []
         proto_meta = {'body_parts': [], 'prototype_ids': [], 'atomic_motion_names': []}

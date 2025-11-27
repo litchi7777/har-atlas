@@ -684,7 +684,7 @@ def get_sensor_data():
         location = params.get('location')
         activity = params.get('activity')
         point_index = params.get('point_index', 0)  # 全データ内でのインデックス
-        model_name = params.get('model_name', 'rotation')
+        model_name = params.get('model_name')
 
         print(f"\n[API /sensor_data] Request:")
         print(f"  Dataset: {dataset}, Location: {location}, Activity: {activity}")

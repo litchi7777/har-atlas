@@ -1,0 +1,464 @@
+{
+  "version": "4.0",
+  "description": "Sensor-optimized Atomic Motions (consolidated from v3's 69 to ~32)",
+
+  "design_rationale": {
+    "consolidation_reason": "v3の69種類はセンサーで区別困難なものを含む。PiCOのPrototype数として適切な30-35に統合",
+    "principles": [
+      "センサー（加速度・ジャイロ）で区別可能な動きパターンのみ",
+      "類似した周波数・振幅パターンは統合",
+      "Body Part別に5-7種類程度に絞る"
+    ],
+    "comparison_with_prior_work": {
+      "video_based_69": "PMC6443174はビデオ骨格から69 Motion Primitives発見。我々はセンサー特化で32に最適化",
+      "hierarchical_mtl_61": "MDPI論文は61 atomic activities。我々はBody Part別・クロスデータセット対応"
+    }
+  },
+
+  "body_part_mapping": {
+    "head": ["Head", "Neck"],
+    "wrist": ["Wrist", "RightWrist", "LeftWrist", "hand", "RightArm", "LeftArm", "RightLowerArm", "LeftLowerArm", "RightUpperArm", "LeftUpperArm"],
+    "hip": ["Hip", "LowerBack", "Waist", "Pocket", "Back"],
+    "chest": ["Chest", "Torso"],
+    "leg": ["RightThigh", "LeftThigh", "RightLeg", "LeftLeg", "RightCalf", "LeftCalf", "ankle", "LeftAnkle", "RightAnkle", "Shin"]
+  },
+
+  "atomic_motions": {
+    "head": {
+      "_count": 5,
+      "_consolidation": "7→5: nod/shake/tilt→head_gesture, rotation維持, bounce_gait/sway_gait維持, stationary維持",
+      "HD01_gesture": "Intentional head movements (nodding, shaking, tilting)",
+      "HD02_rotation": "Looking left/right rotation",
+      "HD03_bounce_gait": "Rhythmic vertical bounce during locomotion",
+      "HD04_sway_gait": "Side-to-side sway during locomotion",
+      "HD05_stationary": "No significant movement"
+    },
+
+    "wrist": {
+      "_count": 7,
+      "_consolidation": "18→7: swing統合, rotation統合, manipulation統合, impact統合, circular削除(未使用)",
+      "W01_swing": "Rhythmic arm swing during locomotion (walking/running)",
+      "W02_swing_large": "Large amplitude arm swing (nordic walking, throwing prep)",
+      "W03_rotation": "Rotational motion (continuous or discrete, e.g., stirring, doorknob)",
+      "W04_manipulation": "Object manipulation (reaching, lifting, pushing, pulling, typing, circular motions)",
+      "W05_impact": "Impact/throwing/catching motion",
+      "W06_grip_stable": "Stable grip with minimal movement (cycling, driving)",
+      "W07_stationary": "No significant movement"
+    },
+
+    "hip": {
+      "_count": 7,
+      "_consolidation": "16→7: gait統合, step統合, jump統合, sway統合",
+      "H01_gait": "Walking/running oscillation (1-4 Hz)",
+      "H02_gait_shuffle": "Shuffling gait with minimal vertical movement",
+      "H03_step_vertical": "Stair stepping motion (up or down)",
+      "H04_jump": "Jump launch and landing (explosive + absorption)",
+      "H05_sway": "Weight shift and lateral sway (standing or walking)",
+      "H06_rotation": "Rotational movement (pedaling, twisting)",
+      "H07_stationary": "No significant movement"
+    },
+
+    "chest": {
+      "_count": 5,
+      "_consolidation": "11→5: rotation統合, bounce統合, breathing統合, lean/twist統合",
+      "C01_rotation_gait": "Counter-rotation during walking/running",
+      "C02_bounce": "Vertical bounce during locomotion (walk/run)",
+      "C03_lean_twist": "Forward/backward leaning or twisting motion",
+      "C04_breathing": "Breathing motion (rest or heavy exertion)",
+      "C05_stationary": "No significant movement"
+    },
+
+    "leg": {
+      "_count": 7,
+      "_consolidation": "17→7: step統合, jump統合, knee_flex統合",
+      "L01_step_walk": "Walking step cycle",
+      "L02_step_run": "Running/jogging step cycle (with flight phase)",
+      "L03_step_stairs": "Stair ascending/descending step",
+      "L04_pedal": "Circular pedaling motion",
+      "L05_jump": "Jumping motion (explosive extension + landing)",
+      "L06_knee_flex": "Knee flexion (squat, kneel, crouch)",
+      "L07_stationary": "No significant movement"
+    }
+  },
+
+  "activities": {
+    "walking": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait", "HD04_sway_gait"],
+        "wrist": ["W01_swing"],
+        "hip": ["H01_gait", "H05_sway"],
+        "chest": ["C01_rotation_gait", "C02_bounce"],
+        "leg": ["L01_step_walk"]
+      }
+    },
+    "walking_upstairs": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W01_swing"],
+        "hip": ["H03_step_vertical"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L03_step_stairs", "L06_knee_flex"]
+      }
+    },
+    "walking_downstairs": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W01_swing"],
+        "hip": ["H03_step_vertical"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L03_step_stairs"]
+      }
+    },
+    "running": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait", "HD04_sway_gait"],
+        "wrist": ["W01_swing"],
+        "hip": ["H01_gait"],
+        "chest": ["C01_rotation_gait", "C02_bounce", "C04_breathing"],
+        "leg": ["L02_step_run"]
+      }
+    },
+    "jogging": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W01_swing"],
+        "hip": ["H01_gait"],
+        "chest": ["C01_rotation_gait", "C02_bounce"],
+        "leg": ["L02_step_run"]
+      }
+    },
+    "shuffling": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W01_swing"],
+        "hip": ["H02_gait_shuffle"],
+        "chest": ["C05_stationary"],
+        "leg": ["L01_step_walk"]
+      }
+    },
+    "jumping": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W02_swing_large"],
+        "hip": ["H04_jump"],
+        "chest": ["C02_bounce"],
+        "leg": ["L05_jump"]
+      }
+    },
+    "rope_jumping": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W03_rotation"],
+        "hip": ["H04_jump"],
+        "chest": ["C04_breathing"],
+        "leg": ["L05_jump"]
+      }
+    },
+    "cycling": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W06_grip_stable"],
+        "hip": ["H06_rotation"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L04_pedal"]
+      }
+    },
+    "sitting": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W07_stationary", "W04_manipulation"],
+        "hip": ["H07_stationary"],
+        "chest": ["C04_breathing", "C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "standing": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W07_stationary", "W04_manipulation"],
+        "hip": ["H05_sway", "H07_stationary"],
+        "chest": ["C04_breathing", "C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "lying": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W07_stationary"],
+        "hip": ["H07_stationary"],
+        "chest": ["C04_breathing", "C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "kneeling": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W07_stationary", "W04_manipulation"],
+        "hip": ["H07_stationary"],
+        "chest": ["C05_stationary"],
+        "leg": ["L06_knee_flex", "L07_stationary"]
+      }
+    },
+    "crouching": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H05_sway"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L06_knee_flex"]
+      }
+    },
+    "bending_forward": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H05_sway"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L06_knee_flex"]
+      }
+    },
+    "brushing_teeth": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H07_stationary"],
+        "chest": ["C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "exercising_stepper": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W06_grip_stable"],
+        "hip": ["H03_step_vertical"],
+        "chest": ["C04_breathing"],
+        "leg": ["L03_step_stairs"]
+      }
+    },
+    "exercising_cross_trainer": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H01_gait"],
+        "chest": ["C04_breathing"],
+        "leg": ["L04_pedal"]
+      }
+    },
+    "rowing": {
+      "level": 1,
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H06_rotation"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L04_pedal"]
+      }
+    },
+    "vacuum_cleaning": {
+      "level": 0,
+      "children": ["walking", "bending_forward", "standing"],
+      "atomic_motions": {
+        "head": ["HD05_stationary", "HD03_bounce_gait"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H01_gait", "H05_sway"],
+        "chest": ["C03_lean_twist"],
+        "leg": ["L01_step_walk"]
+      }
+    },
+    "ironing": {
+      "level": 0,
+      "children": ["standing"],
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H05_sway"],
+        "chest": ["C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "cooking": {
+      "level": 0,
+      "children": ["standing", "walking"],
+      "atomic_motions": {
+        "head": ["HD05_stationary", "HD02_rotation"],
+        "wrist": ["W04_manipulation"],
+        "hip": ["H05_sway", "H01_gait"],
+        "chest": ["C05_stationary"],
+        "leg": ["L01_step_walk", "L07_stationary"]
+      }
+    },
+    "playing_basketball": {
+      "level": 0,
+      "children": ["running", "jumping", "walking"],
+      "atomic_motions": {
+        "head": ["HD02_rotation", "HD03_bounce_gait"],
+        "wrist": ["W05_impact", "W01_swing"],
+        "hip": ["H01_gait", "H04_jump"],
+        "chest": ["C02_bounce"],
+        "leg": ["L02_step_run", "L05_jump"]
+      }
+    },
+    "nordic_walking": {
+      "level": 0,
+      "children": ["walking"],
+      "atomic_motions": {
+        "head": ["HD03_bounce_gait"],
+        "wrist": ["W02_swing_large", "W06_grip_stable"],
+        "hip": ["H01_gait", "H05_sway"],
+        "chest": ["C01_rotation_gait", "C02_bounce"],
+        "leg": ["L01_step_walk"]
+      }
+    },
+    "commuting_car": {
+      "level": 0,
+      "children": ["sitting"],
+      "atomic_motions": {
+        "head": ["HD05_stationary"],
+        "wrist": ["W06_grip_stable", "W07_stationary"],
+        "hip": ["H07_stationary"],
+        "chest": ["C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "commuting_bus": {
+      "level": 0,
+      "children": ["sitting", "standing"],
+      "atomic_motions": {
+        "head": ["HD05_stationary", "HD04_sway_gait"],
+        "wrist": ["W06_grip_stable", "W07_stationary"],
+        "hip": ["H05_sway", "H07_stationary"],
+        "chest": ["C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    },
+    "commuting_train": {
+      "level": 0,
+      "children": ["sitting", "standing"],
+      "atomic_motions": {
+        "head": ["HD05_stationary", "HD04_sway_gait"],
+        "wrist": ["W06_grip_stable", "W07_stationary"],
+        "hip": ["H05_sway", "H07_stationary"],
+        "chest": ["C05_stationary"],
+        "leg": ["L07_stationary"]
+      }
+    }
+  },
+
+  "statistics": {
+    "total_atomic_motions": 31,
+    "by_body_part": {
+      "head": 5,
+      "wrist": 7,
+      "hip": 7,
+      "chest": 5,
+      "leg": 7
+    },
+    "simple_activities": 19,
+    "complex_activities": 8,
+    "consolidation_summary": {
+      "v3_total": 69,
+      "v4_total": 31,
+      "reduction_ratio": "55%削減"
+    }
+  },
+
+  "migration_guide": {
+    "head": {
+      "HD01_nod": "HD01_gesture",
+      "HD02_shake": "HD01_gesture",
+      "HD03_tilt": "HD01_gesture",
+      "HD04_rotation": "HD02_rotation",
+      "HD05_bounce_gait": "HD03_bounce_gait",
+      "HD06_sway_gait": "HD04_sway_gait",
+      "HD07_stationary": "HD05_stationary"
+    },
+    "wrist": {
+      "W01_swing_slow": "W01_swing",
+      "W02_swing_fast": "W01_swing",
+      "W03_swing_large": "W02_swing_large",
+      "W04_rotation_continuous": "W03_rotation",
+      "W05_rotation_discrete": "W03_rotation",
+      "W06_flex_extend": "W04_manipulation",
+      "W07_reach": "W04_manipulation",
+      "W08_push_pull": "W04_manipulation",
+      "W09_lift_lower": "W04_manipulation",
+      "W10_circular": "W04_manipulation",
+      "W11_vibration": "W04_manipulation",
+      "W12_grip_stable": "W06_grip_stable",
+      "W13_gesture": "W04_manipulation",
+      "W14_stationary": "W07_stationary",
+      "W15_impact": "W05_impact",
+      "W16_throw": "W05_impact",
+      "W17_brush_wipe": "W04_manipulation",
+      "W18_cut": "W04_manipulation"
+    },
+    "hip": {
+      "H01_gait_slow": "H01_gait",
+      "H02_gait_fast": "H01_gait",
+      "H03_gait_shuffle": "H02_gait_shuffle",
+      "H04_sway_lateral": "H05_sway",
+      "H05_sway_stand": "H05_sway",
+      "H06_rotation_pedal": "H06_rotation",
+      "H07_step_up": "H03_step_vertical",
+      "H08_step_down": "H03_step_vertical",
+      "H09_jump_launch": "H04_jump",
+      "H10_jump_land": "H04_jump",
+      "H11_bounce_rhythmic": "H04_jump",
+      "H12_bend_forward": "H05_sway",
+      "H13_bend_lateral": "H05_sway",
+      "H14_twist": "H06_rotation",
+      "H15_vibration_vehicle": "H07_stationary",
+      "H16_stationary": "H07_stationary"
+    },
+    "chest": {
+      "C01_rotation_gait": "C01_rotation_gait",
+      "C02_rotation_large": "C01_rotation_gait",
+      "C03_bounce_walk": "C02_bounce",
+      "C04_bounce_run": "C02_bounce",
+      "C05_lean_transition": "C03_lean_twist",
+      "C06_breathing_rest": "C04_breathing",
+      "C07_breathing_heavy": "C04_breathing",
+      "C08_impact": "C02_bounce",
+      "C09_vibration_vehicle": "C05_stationary",
+      "C10_twist": "C03_lean_twist",
+      "C11_stationary": "C05_stationary"
+    },
+    "leg": {
+      "L01_step_walk": "L01_step_walk",
+      "L02_step_run": "L02_step_run",
+      "L03_step_jog": "L02_step_run",
+      "L04_step_shuffle": "L01_step_walk",
+      "L05_step_ascend": "L03_step_stairs",
+      "L06_step_descend": "L03_step_stairs",
+      "L07_pedal": "L04_pedal",
+      "L08_jump_explosive": "L05_jump",
+      "L09_jump_land": "L05_jump",
+      "L10_jump_small": "L05_jump",
+      "L11_knee_flex_deep": "L06_knee_flex",
+      "L12_knee_flex_shallow": "L06_knee_flex",
+      "L13_kick": "L05_jump",
+      "L14_weight_shift": "L07_stationary",
+      "L15_lateral_step": "L01_step_walk",
+      "L16_pivot": "L01_step_walk",
+      "L17_stationary": "L07_stationary"
+    }
+  }
+}

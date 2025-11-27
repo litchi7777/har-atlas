@@ -196,7 +196,10 @@ class ZeroshotEvaluator:
         target_dataset: str,
     ) -> List[str]:
         """
-        データからActivityを予測
+        データからActivityを予測（単一Body Part版）
+
+        ターゲットデータセットのActivity候補から、検出されたAtomic Motionと
+        最もマッチするActivityを選択する。
 
         Args:
             data: 入力データ (B, C, T)
@@ -206,39 +209,133 @@ class ZeroshotEvaluator:
         Returns:
             予測されたActivity名のリスト
         """
-        _, similarities = self.get_embeddings(data, body_part)
+        # 単一Body Partの場合はpredict_activity_multiに委譲
+        atomic_ids = self._get_atomic_ids(data, body_part)
+        return self.predict_activity_multi(
+            {body_part: atomic_ids},
+            target_dataset
+        )
 
-        # 最も類似度の高いPrototype
-        best_prototype_idx = similarities.argmax(dim=1)  # (B,)
+    def _get_atomic_ids(
+        self,
+        data: torch.Tensor,
+        body_part: str,
+    ) -> List[str]:
+        """データからAtomic Motion IDのリストを取得"""
+        _, similarities = self.get_embeddings(data, body_part)
+        best_prototype_idx = similarities.argmax(dim=1)
+
+        atomic_ids = []
+        for idx in best_prototype_idx.tolist():
+            atomic_id = self.atomic_id_to_name.get(body_part, {}).get(idx, "unknown")
+            atomic_ids.append(atomic_id)
+        return atomic_ids
+
+    def predict_activity_multi(
+        self,
+        atomic_ids_by_body_part: Dict[str, List[str]],
+        target_dataset: str,
+    ) -> List[str]:
+        """
+        複数Body PartのAtomic Motionを統合してActivityを予測
+
+        各Activity候補について、いくつのBody Partでマッチするかをスコアリングし、
+        最高スコアのActivityを選択する。
+
+        Args:
+            atomic_ids_by_body_part: {body_part: [atomic_id, ...]} のdict
+                                     各リストは同じ長さ（バッチサイズ）
+            target_dataset: 評価対象データセット
+
+        Returns:
+            予測されたActivity名のリスト
+        """
+        # ターゲットデータセットのActivity候補を取得
+        try:
+            target_activities = self.atlas.get_activities(target_dataset)
+        except KeyError:
+            return ["unknown"] * len(next(iter(atomic_ids_by_body_part.values())))
+
+        # 各Activityの期待Atomic Motionを事前計算（全Body Part分）
+        activity_expected = {}  # {activity: {body_part: set(atomic_ids)}}
+        for activity in target_activities:
+            activity_expected[activity] = {}
+            for body_part in atomic_ids_by_body_part.keys():
+                expected = self.atlas.get_atomic_motions_by_body_part(
+                    target_dataset, activity, body_part
+                )
+                activity_expected[activity][body_part] = set(expected)
+
+        # バッチサイズを取得
+        batch_size = len(next(iter(atomic_ids_by_body_part.values())))
+        body_parts = list(atomic_ids_by_body_part.keys())
 
         predictions = []
-        for idx in best_prototype_idx.tolist():
-            # Prototype index → Atomic Motion ID
-            atomic_id = self.atomic_id_to_name.get(body_part, {}).get(idx)
+        for i in range(batch_size):
+            # このサンプルの各Body PartのAtomic Motion
+            sample_atomics = {
+                bp: atomic_ids_by_body_part[bp][i]
+                for bp in body_parts
+            }
 
-            if atomic_id is None:
-                predictions.append("unknown")
-                continue
+            # 各Activityのスコアを計算（マッチするBody Part数）
+            activity_scores = {}
+            for activity, expected_by_bp in activity_expected.items():
+                score = 0
+                for bp, expected_set in expected_by_bp.items():
+                    if sample_atomics.get(bp) in expected_set:
+                        score += 1
+                activity_scores[activity] = score
 
-            # Atomic Motion → Activity候補
-            candidates = self.atomic_to_activities[body_part].get(atomic_id, [])
-
-            # target_datasetのActivityを優先
-            target_activities = [a for d, a in candidates if d == target_dataset]
-            if target_activities:
-                # 最初の候補を使用
-                predictions.append(target_activities[0])
-            elif candidates:
-                # 他のデータセットの候補から推測
-                # 最も頻出するActivity名を使用
-                activity_counts = defaultdict(int)
-                for _, activity in candidates:
-                    activity_counts[activity] += 1
-                predictions.append(max(activity_counts, key=activity_counts.get))
+            # 最高スコアのActivityを選択
+            if activity_scores:
+                max_score = max(activity_scores.values())
+                if max_score > 0:
+                    # 最高スコアのActivityを選択（同点なら最初のもの）
+                    best_activity = max(activity_scores, key=activity_scores.get)
+                    predictions.append(best_activity)
+                else:
+                    # どのActivityともマッチしない場合
+                    predictions.append(self._fallback_predict(
+                        sample_atomics, target_dataset, body_parts
+                    ))
             else:
                 predictions.append("unknown")
 
         return predictions
+
+    def _fallback_predict(
+        self,
+        sample_atomics: Dict[str, str],
+        target_dataset: str,
+        body_parts: List[str],
+    ) -> str:
+        """フォールバック: 逆引きマッピングから推測"""
+        # 優先順位: leg > chest > hip > wrist
+        priority = ["leg", "chest", "hip", "wrist", "head"]
+
+        for bp in priority:
+            if bp not in sample_atomics:
+                continue
+            atomic_id = sample_atomics[bp]
+            candidates = self.atomic_to_activities[bp].get(atomic_id, [])
+            target_matches = [a for d, a in candidates if d == target_dataset]
+            if target_matches:
+                return target_matches[0]
+
+        # それでもマッチしない場合は最頻Activity
+        for bp in body_parts:
+            atomic_id = sample_atomics.get(bp)
+            if not atomic_id:
+                continue
+            candidates = self.atomic_to_activities[bp].get(atomic_id, [])
+            if candidates:
+                activity_counts = defaultdict(int)
+                for _, activity in candidates:
+                    activity_counts[activity] += 1
+                return max(activity_counts, key=activity_counts.get)
+
+        return "unknown"
 
     def evaluate_dataset(
         self,

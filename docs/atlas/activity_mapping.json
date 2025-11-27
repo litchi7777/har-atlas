@@ -706,15 +706,6 @@
           ]
         }
       },
-      "jumping": {
-        "level": 1,
-        "atomic_motions": {
-          "hip": [
-            "H09_jump_launch",
-            "H10_jump_land"
-          ]
-        }
-      },
       "sitting": {
         "level": 1,
         "atomic_motions": {
@@ -755,6 +746,15 @@
           "hip": [
             "H15_vibration_vehicle",
             "H16_stationary"
+          ]
+        }
+      },
+      "jumping_up": {
+        "level": 1,
+        "atomic_motions": {
+          "hip": [
+            "H09_jump_launch",
+            "H10_jump_land"
           ]
         }
       }
@@ -1733,24 +1733,6 @@
           ]
         }
       },
-      "open_a_bottle": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W05_rotation_discrete",
-            "W12_grip_stable"
-          ]
-        }
-      },
-      "open_a_box": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W08_push_pull",
-            "W12_grip_stable"
-          ]
-        }
-      },
       "phone_call": {
         "level": 1,
         "atomic_motions": {
@@ -1758,24 +1740,6 @@
             "W07_reach",
             "W12_grip_stable",
             "W14_stationary"
-          ]
-        }
-      },
-      "put_on_a_jacket": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W08_push_pull"
-          ]
-        }
-      },
-      "put_on_a_shoe": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W09_lift_lower"
           ]
         }
       },
@@ -1824,39 +1788,12 @@
           ]
         }
       },
-      "take_off_a_jacket": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W08_push_pull"
-          ]
-        }
-      },
-      "take_off_a_shoe": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W09_lift_lower"
-          ]
-        }
-      },
       "take_off_glasses": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
             "W07_reach",
             "W12_grip_stable"
-          ]
-        }
-      },
-      "type_on_a_keyboard": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W13_gesture",
-            "W06_flex_extend"
           ]
         }
       },
@@ -1886,6 +1823,69 @@
             "W12_grip_stable"
           ]
         }
+      },
+      "open_bottle": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W05_rotation_discrete",
+            "W12_grip_stable"
+          ]
+        }
+      },
+      "open_box": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W08_push_pull",
+            "W12_grip_stable"
+          ]
+        }
+      },
+      "put_on_jacket": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W07_reach",
+            "W08_push_pull"
+          ]
+        }
+      },
+      "put_on_shoe": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W07_reach",
+            "W09_lift_lower"
+          ]
+        }
+      },
+      "take_off_jacket": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W07_reach",
+            "W08_push_pull"
+          ]
+        }
+      },
+      "take_off_shoe": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W07_reach",
+            "W09_lift_lower"
+          ]
+        }
+      },
+      "type_on_keyboard": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W13_gesture",
+            "W06_flex_extend"
+          ]
+        }
       }
     }
   },
@@ -1896,6 +1896,9 @@
         "atomic_motions": {
           "hip": [
             "H06_rotation_pedal"
+          ],
+          "wrist": [
+            "W12_grip_stable"
           ]
         }
       },
@@ -1904,6 +1907,9 @@
         "atomic_motions": {
           "hip": [
             "H16_stationary"
+          ],
+          "wrist": [
+            "W14_stationary"
           ]
         }
       },
@@ -1913,6 +1919,9 @@
           "hip": [
             "H05_sway_stand",
             "H16_stationary"
+          ],
+          "wrist": [
+            "W14_stationary"
           ]
         }
       },
@@ -1922,6 +1931,9 @@
           "hip": [
             "H01_gait_slow",
             "H04_sway_lateral"
+          ],
+          "wrist": [
+            "W01_swing_slow"
           ]
         }
       },
@@ -1930,6 +1942,9 @@
         "atomic_motions": {
           "hip": [
             "H07_step_up"
+          ],
+          "wrist": [
+            "W01_swing_slow"
           ]
         }
       },
@@ -1938,6 +1953,9 @@
         "atomic_motions": {
           "hip": [
             "H08_step_down"
+          ],
+          "wrist": [
+            "W01_swing_slow"
           ]
         }
       }
@@ -3174,51 +3192,7 @@
   },
   "ward": {
     "activities": {
-      "rest": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W14_stationary"
-          ],
-          "hip": [
-            "H16_stationary"
-          ],
-          "leg": [
-            "L17_stationary"
-          ]
-        }
-      },
       "walk_forward": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W01_swing_slow"
-          ],
-          "hip": [
-            "H01_gait_slow",
-            "H04_sway_lateral"
-          ],
-          "leg": [
-            "L01_step_walk"
-          ]
-        }
-      },
-      "walk_forward_left": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W01_swing_slow"
-          ],
-          "hip": [
-            "H01_gait_slow",
-            "H04_sway_lateral"
-          ],
-          "leg": [
-            "L01_step_walk"
-          ]
-        }
-      },
-      "walk_forward_right": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
@@ -3258,34 +3232,6 @@
           ],
           "leg": [
             "L16_pivot"
-          ]
-        }
-      },
-      "lateral_left": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W14_stationary"
-          ],
-          "hip": [
-            "H04_sway_lateral"
-          ],
-          "leg": [
-            "L15_lateral_step"
-          ]
-        }
-      },
-      "lateral_right": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W14_stationary"
-          ],
-          "hip": [
-            "H04_sway_lateral"
-          ],
-          "leg": [
-            "L15_lateral_step"
           ]
         }
       },
@@ -3356,6 +3302,78 @@
           ],
           "hip": [
             "H01_gait_slow"
+          ],
+          "leg": [
+            "L01_step_walk"
+          ]
+        }
+      },
+      "sit": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W14_stationary"
+          ],
+          "hip": [
+            "H16_stationary"
+          ],
+          "leg": [
+            "L17_stationary"
+          ]
+        }
+      },
+      "lie": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W14_stationary"
+          ],
+          "hip": [
+            "H16_stationary"
+          ],
+          "leg": [
+            "L17_stationary"
+          ]
+        }
+      },
+      "stand": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W14_stationary"
+          ],
+          "hip": [
+            "H16_stationary"
+          ],
+          "leg": [
+            "L17_stationary"
+          ]
+        }
+      },
+      "walk_left_circle": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W01_swing_slow"
+          ],
+          "hip": [
+            "H01_gait_slow",
+            "H04_sway_lateral"
+          ],
+          "leg": [
+            "L01_step_walk"
+          ]
+        }
+      },
+      "walk_right_circle": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W01_swing_slow"
+          ],
+          "hip": [
+            "H01_gait_slow",
+            "H04_sway_lateral"
           ],
           "leg": [
             "L01_step_walk"
@@ -3541,25 +3559,7 @@
   },
   "openpack": {
     "activities": {
-      "picking": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W09_lift_lower",
-            "W07_reach"
-          ]
-        }
-      },
-      "relocate_item_label": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W06_flex_extend"
-          ]
-        }
-      },
-      "assemble_box": {
+      "assemble": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
@@ -3568,7 +3568,7 @@
           ]
         }
       },
-      "insert_items": {
+      "insert": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
@@ -3577,25 +3577,39 @@
           ]
         }
       },
-      "close_box": {
+      "put": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
-            "W08_push_pull",
-            "W06_flex_extend"
-          ]
-        }
-      },
-      "attach_box_label": {
-        "level": 1,
-        "atomic_motions": {
-          "wrist": [
-            "W08_push_pull",
+            "W09_lift_lower",
             "W07_reach"
           ]
         }
       },
-      "scan_label": {
+      "walk": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W01_swing_slow"
+          ],
+          "hip": [
+            "H01_gait_slow"
+          ],
+          "leg": [
+            "L01_step_walk"
+          ]
+        }
+      },
+      "pick": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W09_lift_lower",
+            "W07_reach"
+          ]
+        }
+      },
+      "scan": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
@@ -3604,7 +3618,7 @@
           ]
         }
       },
-      "attach_shipping_label": {
+      "press": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
@@ -3613,12 +3627,21 @@
           ]
         }
       },
-      "put_on_back_table": {
+      "open": {
         "level": 1,
         "atomic_motions": {
           "wrist": [
-            "W09_lift_lower",
-            "W07_reach"
+            "W07_reach",
+            "W06_flex_extend"
+          ]
+        }
+      },
+      "close": {
+        "level": 1,
+        "atomic_motions": {
+          "wrist": [
+            "W08_push_pull",
+            "W06_flex_extend"
           ]
         }
       }
@@ -3629,123 +3652,65 @@
       "standing": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W14_stationary"
-          ],
-          "leg": [
-            "L14_weight_shift",
-            "L17_stationary"
-          ],
-          "head": [
-            "HD07_stationary"
-          ]
+          "wrist": ["W14_stationary"],
+          "leg": ["L14_weight_shift", "L17_stationary"],
+          "head": ["HD07_stationary"]
         }
       },
       "walking": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W01_swing_slow"
-          ],
-          "leg": [
-            "L01_step_walk"
-          ],
-          "head": [
-            "HD05_bounce_gait"
-          ]
+          "wrist": ["W01_swing_slow"],
+          "leg": ["L01_step_walk"],
+          "head": ["HD05_bounce_gait"]
         }
       },
       "cart": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W08_push_pull",
-            "W12_grip_stable"
-          ],
-          "leg": [
-            "L01_step_walk"
-          ],
-          "head": [
-            "HD05_bounce_gait"
-          ]
+          "wrist": ["W08_push_pull", "W12_grip_stable"],
+          "leg": ["L01_step_walk"],
+          "head": ["HD05_bounce_gait"]
         }
       },
-      "handling_centered": {
+      "handling_upwards": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W09_lift_lower",
-            "W06_flex_extend"
-          ],
-          "leg": [
-            "L17_stationary"
-          ],
-          "head": [
-            "HD07_stationary"
-          ]
+          "wrist": ["W07_reach", "W09_lift_lower"],
+          "leg": ["L11_knee_flex_deep", "L17_stationary"],
+          "head": ["HD03_tilt"]
         }
       },
-      "handling_bent": {
+      "handling_centred": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W09_lift_lower"
-          ],
-          "leg": [
-            "L11_knee_flex_deep",
-            "L17_stationary"
-          ],
-          "head": [
-            "HD03_tilt"
-          ]
+          "wrist": ["W07_reach", "W12_grip_stable"],
+          "leg": ["L17_stationary"],
+          "head": ["HD07_stationary"]
         }
       },
-      "handling_lowered": {
+      "handling_downwards": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W09_lift_lower"
-          ],
-          "leg": [
-            "L11_knee_flex_deep",
-            "L11_knee_flex_deep"
-          ],
-          "head": [
-            "HD03_tilt"
-          ]
+          "wrist": ["W07_reach", "W09_lift_lower"],
+          "leg": ["L11_knee_flex_deep"],
+          "head": ["HD03_tilt"]
         }
       },
       "synchronization": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W07_reach",
-            "W06_flex_extend"
-          ],
-          "leg": [
-            "L01_step_walk",
-            "L14_weight_shift"
-          ],
-          "head": [
-            "HD04_rotation"
-          ]
+          "wrist": ["W03_swing_large", "W06_flex_extend"],
+          "leg": ["L14_weight_shift", "L17_stationary"],
+          "head": ["HD04_rotation"]
         }
       },
       "none": {
         "level": 1,
         "atomic_motions": {
-          "wrist": [
-            "W14_stationary"
-          ],
-          "leg": [
-            "L17_stationary"
-          ],
-          "head": [
-            "HD07_stationary"
-          ]
+          "wrist": ["W14_stationary"],
+          "leg": ["L17_stationary"],
+          "head": ["HD07_stationary"]
         }
       }
     }

@@ -247,12 +247,13 @@ L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 
 ---
 
-## 🔧 実装状況（2025-11-26現在）
+## 🔧 実装状況（2025-11-27現在）
 
 ### ✅ 完了
 1. **Atlas構築** (docs/atlas/)
    - atomic_motions.json: 69種のAtomic Motion定義
    - activity_mapping.json: データセット×Activity→Atomic Mapping
+   - activity_mapping_v2.json: Multi-body-part対応版
    - body_part_taxonomy.json: Body Part分類
 
 2. **3階層Loss実装** (src/losses/hierarchical_loss.py)
@@ -271,20 +272,38 @@ L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 5. **学習スクリプト** (src/training/pretrain.py)
    - Combined mode: MTL + Hierarchical SSL同時学習
 
-### ⚠️ 要確認・修正
-1. **NHANESの扱い**
-   - 現状: 全バッチに含める設計だが、ラベルなしのためL_atomic計算不可
-   - 方針: NHANESはwristデータなのでwristバッチにのみ含めるべき？
-   - **決定**: Body Part別バッチでは除外し、MTL部分のみで使用
+6. **Zero-shot評価パイプライン** ✅ NEW
+   - analyze_zeroshot_multidevice.py: Multi-body-part評価
+   - hargpt_baseline.py: HARGPTベースライン実装
+   - compare_methods.py: 手法比較スクリプト
 
-2. **PiCO実装の検証** ✅
-   - 現状: candidate_ids=None で全Prototypeが候補
-   - 動作: soft_assignment → positive_weights計算 → Weighted InfoNCE
-   - 期待動作: 学習が進むにつれてPrototypeがAtomic Motionを表現
+### 📊 初期評価結果（DSADS, 50samples）
+
+| 手法 | 全体Acc | Dynamic Acc |
+|------|---------|-------------|
+| Ours (LLM Multi) | 56% | 47.5% |
+| Ours (Rule Multi) | 58% | 47.5% |
+| Ours (Rule Single) | 52% | 40% |
+
+**Multi-device効果**: +6-7.5pp
+
+**課題**:
+- 階段昇降の混同 (ascending↔descending)
+- cycling認識困難 (17%)
+- 複合動作 (rowing等) 0%
+
+詳細: [docs/EXPERIMENT_LOG_2025_11_27.md](EXPERIMENT_LOG_2025_11_27.md)
 
 ---
 
 ## 🔄 更新履歴
+
+- **2025-11-27**:
+  - ATLAS v2によるZero-shot評価実施
+  - Multi-body-part推論の効果確認 (+6-7.5pp)
+  - HARGPTベースライン実装完了
+  - 課題特定: 階段昇降混同、cycling、複合動作
+  - EXPERIMENT_LOG作成
 
 - **2025-11-26**:
   - Body Part別バッチサンプラー（BodyPartBatchSampler）実装完了
@@ -315,28 +334,29 @@ L_total = λ0 * L_complex + λ1 * L_activity + λ2 * L_atomic
 ## 📌 Next Actions
 
 ### 即座に実行
-1. **小規模実験で動作確認** ← 最優先
-   - 3-5データセットで学習を実行
-   - Loss値が下がるか確認
-   - Prototype割り当てが収束するか確認
+1. **HARGPTベースラインとの公平比較** ← 最優先
+   - 同一サンプルで評価
+   - 結果テーブル完成
 
-2. **NHANESの扱いを決定**
-   - 選択肢A: wristバッチにのみ含める（Body Part準拠）
-   - 選択肢B: L_atomic計算からは除外し、MTL部分のみで使用
-   - 選択肢C: 除外（ラベルなしデータは使わない）
-   - **推奨**: 選択肢B（MTL + Hierarchical両方で貢献、ただしL_atomic計算時はスキップ）
-
-3. **コミット・プッシュ**
-   - BodyPartBatchSampler実装をコミット
+2. **ATLASマッピング改善**
+   - 階段昇降の区別強化 (L05/L06)
+   - cycling用Atomic Motion検討
 
 ### 今週中
-4. **λ0, λ1, λ2のチューニング**
+3. **より多くのデータセットで評価**
+   - 現在: dsads, mhealth, pamap2
+   - 追加: realdisp, opportunity等
+
+4. **Ablation Study開始**
+   - w/o Multi-device
+   - w/o LLM (Rule-onlyベースライン)
+
+### 来週以降
+5. **λ0, λ1, λ2のチューニング**
    - 初期値: 0.1, 0.3, 0.6
    - Grid searchで最適値を探索
 
-5. **人間評価の準備**
-   - 100 windowのサンプリング
-   - 評価UIの準備
+6. **論文用Figure作成準備**
 
 ---
 

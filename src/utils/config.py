@@ -74,15 +74,23 @@ def validate_config(config: Dict[str, Any], mode: str = "pretrain") -> None:
     Raises:
         ConfigValidationError: 設定が無効な場合
     """
-    # 必須セクションの確認（sensor_dataは廃止、dataに統一）
-    required_sections = ["model", "data", "training", "device", "seed"]
+    # 必須セクションの確認
+    # sensor_data は data の別名としてサポート（後方互換性）
+    if "sensor_data" in config and "data" not in config:
+        config["data"] = config["sensor_data"]
+
+    required_sections = ["model", "training", "device", "seed"]
 
     for section in required_sections:
         if section not in config:
             raise ConfigValidationError(f"Missing required section: {section}")
 
+    # dataセクションは必須ではないがどちらかが必要
+    if "data" not in config and "sensor_data" not in config:
+        raise ConfigValidationError("Missing required section: data or sensor_data")
+
     # データセットタイプを判定（dataset_location_pairsがあればセンサーデータ）
-    data_config = config.get("data", {})
+    data_config = config.get("data", config.get("sensor_data", {}))
     is_sensor_data = "dataset_location_pairs" in data_config
 
     # モデル設定の検証

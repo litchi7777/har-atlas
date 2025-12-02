@@ -3,7 +3,7 @@ hierarchical:
   atlas_path: docs/atlas/activity_mapping_v2.json
   atomic_motions_path: docs/atlas/atomic_motions_v2.json
   batch_size: 10
-  samples_per_source: 128
+  samples_per_source: 256
   batches_per_epoch: 100
   unlabeled_datasets:
   - nhanes
@@ -205,7 +205,7 @@ rotation_augmentation:
 training:
   epochs: 100
   batch_size: 8
-  samples_per_source: 128
+  samples_per_source: 256
   learning_rate: 0.001
   weight_decay: 0.0001
   optimizer: adam
@@ -224,17 +224,24 @@ early_stopping:
 wandb:
   enabled: true
   project: har-foundation
-  group: null
+  group: atlas_v2_lodo
   job_type: pretrain
   entity: null
   name: null
   tags:
-  - combined_mtl_hierarchical
-  - 3level_loss
-  - primitive_discovery
-  notes: Combined MTL + Hierarchical SSL training (L_complex, L_activity, L_atomic
-    + binary_permute, binary_reverse, binary_timewarp)
+  - atlas_v2
+  - lodo
+  - 31_atomic_motions
+  notes: ATLAS v2 (31 atomic motions) with LODO evaluation (dsads, pamap2, mhealth)
 seed: 42
+grid_search:
+  data:
+    batch_loader:
+      exclude_patterns:
+        - []
+        - ["dsads"]
+        - ["pamap2"]
+        - ["mhealth"]
 settings:
   stop_on_error: false
   save_summary: true
@@ -242,5 +249,7 @@ settings:
   experiments_per_gpu: 1
   max_workers: null
   available_gpus:
+  - 0
+  - 1
   - 2
   - 3

@@ -1,0 +1,139 @@
+# LIMU-BERT Comparison Experiment
+# Compare LIMU-BERT (pretrained) vs ResNet (scratch) across multiple datasets and body parts
+
+dataset_type: "sensor"
+
+sensor_data:
+  data_root: "har-unified-dataset/data/processed"
+  window_size: 150  # 5.0秒 @ 30Hz
+  original_window_size: 150
+
+  window_clip:
+    enabled: false
+
+  # Default (will be overridden by grid_search)
+  dataset_location_pairs:
+    - ["dsads", "Torso"]
+
+  batch_loader:
+    exclude_patterns: []
+    sample_threshold: 50
+    batch_size: 64
+
+  user_split:
+    test_users: ["1", "2"]
+    val_users: ["3", "4"]
+
+# Model (default - will be overridden)
+model:
+  name: "limu_bert"
+  backbone: "limu_bert"
+  num_classes: 19  # will be auto-detected
+  hidden: 72
+  hidden_ff: 144
+  n_layers: 4
+  n_heads: 4
+  emb_norm: true
+  pretrained_path: "pretrained/limu_bert/hhar.pt"
+  freeze_backbone: false
+
+# Training
+training:
+  epochs: 50
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adam"
+  scheduler: "step"
+  step_size: 20
+  gamma: 0.1
+
+# Loss
+loss:
+  type: "cross_entropy"
+  label_smoothing: 0.1
+
+# Hardware
+device: "cuda"
+multi_gpu: false
+mixed_precision: true
+
+# Checkpointing
+checkpoint:
+  save_best: true
+  metric: "val_accuracy"
+  resume: null
+
+# Evaluation
+evaluation:
+  eval_interval: 1
+  metrics: ["accuracy", "f1", "precision", "recall"]
+
+# Weights & Biases
+wandb:
+  enabled: true
+  project: "har-foundation"
+  group: null
+  job_type: "limu_bert_comparison"
+  entity: null
+  name: null
+  tags: ["limu_bert", "comparison", "multi_dataset"]
+  notes: "LIMU-BERT vs ResNet comparison across datasets"
+
+# Early Stopping
+early_stopping:
+  patience: 15
+  min_delta: 0.0001
+
+# Seed
+seed: 42
+
+# Grid Search: Multiple datasets × (LIMU-BERT vs ResNet)
+# model配下はlist-of-dicts形式でbackboneとpretrained_pathをペアで指定
+grid_search:
+  seed:
+    - 42
+  sensor_data:
+    dataset_location_pairs:
+      # === DSADS (19 classes) ===
+      - [["dsads", "Torso"]]
+      - [["dsads", "RightArm"]]
+      - [["dsads", "RightLeg"]]
+
+      # === MHEALTH (12 classes) ===
+      - [["mhealth", "Chest"]]
+      - [["mhealth", "RightWrist"]]
+      - [["mhealth", "LeftAnkle"]]
+
+      # === PAMAP2 (12 classes) ===
+      - [["pamap2", "chest"]]
+      - [["pamap2", "hand"]]
+      - [["pamap2", "ankle"]]
+
+      # === HHAR (6 classes) - LIMU-BERT pretrain dataset ===
+      - [["hhar", "nexus4_1"]]
+
+      # === FORTHTRACE (16 classes) ===
+      - [["forthtrace", "Torso"]]
+      - [["forthtrace", "RightWrist"]]
+
+      # === HAR70PLUS (7 classes) ===
+      - [["har70plus", "LowerBack"]]
+
+      # === HARTH (12 classes) ===
+      - [["harth", "LowerBack"]]
+
+  # Model configurations as paired settings (list-of-dicts format)
+  # Each dict represents one model configuration
+  model:
+    - backbone: "limu_bert"
+      pretrained_path: "pretrained/limu_bert/hhar.pt"
+    - backbone: "resnet"
+      pretrained_path: null
+
+settings:
+  stop_on_error: false
+  save_summary: true
+  parallel: true
+  experiments_per_gpu: 2
+  max_workers: null
+  available_gpus: [0, 1, 2, 3]

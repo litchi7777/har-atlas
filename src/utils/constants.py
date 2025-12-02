@@ -7,7 +7,7 @@
 from typing import List
 
 # サポートされるバックボーン（時系列センサーデータ用）
-SUPPORTED_SENSOR_BACKBONES: List[str] = ["simple_cnn", "resnet1d", "deepconvlstm", "resnet"]
+SUPPORTED_SENSOR_BACKBONES: List[str] = ["simple_cnn", "resnet1d", "deepconvlstm", "resnet", "limu_bert"]
 
 # サポートされるオプティマイザー
 SUPPORTED_OPTIMIZERS: List[str] = ["adam", "sgd", "adamw"]

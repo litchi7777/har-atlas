@@ -30,6 +30,7 @@ sys.path.insert(0, str(project_root))
 from src.data.augmentations import get_augmentation_pipeline
 from src.data.batch_dataset import InMemoryDataset, MultiDeviceInMemoryDataset
 from src.models.backbones import SensorClassificationModel, MultiDeviceSensorClassificationModel
+from src.models.limu_bert import LIMUBertClassifier
 
 # har-unified-datasetからdataset_infoを直接ロード（名前空間の衝突を避けるため）
 har_dataset_info_path = project_root / "har-unified-dataset" / "src" / "dataset_info.py"
@@ -886,25 +887,43 @@ def create_model(
     Returns:
         作成されたモデル
     """
-    # ウィンドウサイズに応じて適切なアーキテクチャを自動選択
-    # （事前学習時と同じロジック）
-    nano_window = sequence_length < 20   # 15サンプル用
-    micro_window = 20 <= sequence_length < 100  # 30, 60サンプル用
+    backbone = config["model"].get("backbone", "simple_cnn")
 
-    model = SensorClassificationModel(
-        in_channels=in_channels,
-        num_classes=num_classes,
-        backbone=config["model"].get("backbone", "simple_cnn"),
-        pretrained_path=config["model"].get("pretrained_path"),
-        freeze_backbone=config["model"].get("freeze_backbone", False),
-        micro_window=micro_window,
-        nano_window=nano_window,
-        device=device,
-    )
+    # LIMU-BERT の場合は専用のクラスを使用
+    if backbone == "limu_bert":
+        model = LIMUBertClassifier(
+            num_classes=num_classes,
+            feature_num=in_channels,
+            hidden=config["model"].get("hidden", 72),
+            hidden_ff=config["model"].get("hidden_ff", 144),
+            n_layers=config["model"].get("n_layers", 4),
+            n_heads=config["model"].get("n_heads", 4),
+            seq_len=sequence_length,
+            emb_norm=config["model"].get("emb_norm", True),
+            pretrained_path=config["model"].get("pretrained_path"),
+            freeze_encoder=config["model"].get("freeze_backbone", False),
+            device=device,
+        ).to(device)
+    else:
+        # ウィンドウサイズに応じて適切なアーキテクチャを自動選択
+        # （事前学習時と同じロジック）
+        nano_window = sequence_length < 20   # 15サンプル用
+        micro_window = 20 <= sequence_length < 100  # 30, 60サンプル用
+
+        model = SensorClassificationModel(
+            in_channels=in_channels,
+            num_classes=num_classes,
+            backbone=backbone,
+            pretrained_path=config["model"].get("pretrained_path"),
+            freeze_backbone=config["model"].get("freeze_backbone", False),
+            micro_window=micro_window,
+            nano_window=nano_window,
+            device=device,
+        )
 
     param_info = count_parameters(model)
     logger.info(
-        f"Model created: {config['model']['backbone']}, "
+        f"Model created: {backbone}, "
         f"Total params: {param_info['total']:,}, "
         f"Trainable: {param_info['trainable']:,}"
     )

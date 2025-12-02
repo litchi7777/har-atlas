@@ -12,6 +12,7 @@ HAR Foundation - 統一分析インターフェース
     extract       - 特徴量抽出
     report        - F1スコア比較レポート
     compare       - ファインチューニング比較
+    reconstruct   - センサーデータのリコンストラクション可視化
 
 例:
     # 埋め込み可視化
@@ -31,6 +32,11 @@ HAR Foundation - 統一分析インターフェース
     # ファインチューニング比較
     python analysis/main.py compare \\
         --runs run_20251112_*
+
+    # リコンストラクション可視化
+    python analysis/main.py reconstruct \\
+        --model experiments/pretrain/run_*/ssl_tasks=*/models/checkpoint_epoch_99.pth \\
+        --num-samples 5
 
 ヘルプ:
     python analysis/main.py <command> --help
@@ -57,6 +63,7 @@ def create_parser():
   extract       特徴量抽出
   report        F1スコア比較レポート
   compare       ファインチューニング比較
+  reconstruct   リコンストラクション可視化
 
 各コマンドのヘルプ:
   python analysis/main.py <command> --help
@@ -197,6 +204,48 @@ def create_parser():
         help='比較するメトリクス'
     )
 
+    # ========================================
+    # reconstruct - リコンストラクション可視化
+    # ========================================
+    reconstruct_parser = subparsers.add_parser(
+        'reconstruct',
+        help='センサーデータのリコンストラクション可視化'
+    )
+    reconstruct_parser.add_argument(
+        '--model', type=str, required=True,
+        help='事前学習済みモデルのパス（masking_*タスクを含むモデル）'
+    )
+    reconstruct_parser.add_argument(
+        '--data-root', type=str,
+        default='har-unified-dataset/data/processed',
+        help='データルート'
+    )
+    reconstruct_parser.add_argument(
+        '--datasets', nargs='+', default=None,
+        help='使用するデータセット'
+    )
+    reconstruct_parser.add_argument(
+        '--num-samples', type=int, default=5,
+        help='可視化するサンプル数'
+    )
+    reconstruct_parser.add_argument(
+        '--mask-ratio', type=float, default=0.15,
+        help='マスク比率'
+    )
+    reconstruct_parser.add_argument(
+        '--device', type=str, default='cuda',
+        choices=['cuda', 'cpu'],
+        help='デバイス'
+    )
+    reconstruct_parser.add_argument(
+        '--output-dir', type=str, default='analysis/figures',
+        help='出力ディレクトリ'
+    )
+    reconstruct_parser.add_argument(
+        '--no-show', action='store_true',
+        help='プロットを表示しない'
+    )
+
     return parser
 
 
@@ -310,6 +359,36 @@ def cmd_compare(args):
     visualize_finetune_comparison.main()
 
 
+def cmd_reconstruct(args):
+    """リコンストラクション可視化コマンド"""
+    print("="*80)
+    print("リコンストラクション可視化を実行します")
+    print("="*80)
+
+    from scripts import visualize_reconstruction
+
+    sys.argv = ['visualize_reconstruction.py']
+    sys.argv.extend(['--model', args.model])
+
+    if args.data_root:
+        sys.argv.extend(['--data-root', args.data_root])
+    if args.datasets:
+        sys.argv.append('--datasets')
+        sys.argv.extend(args.datasets)
+    if args.num_samples:
+        sys.argv.extend(['--num-samples', str(args.num_samples)])
+    if args.mask_ratio:
+        sys.argv.extend(['--mask-ratio', str(args.mask_ratio)])
+    if args.device:
+        sys.argv.extend(['--device', args.device])
+    if args.output_dir:
+        sys.argv.extend(['--output-dir', args.output_dir])
+    if args.no_show:
+        sys.argv.append('--no-show')
+
+    visualize_reconstruction.main()
+
+
 def main():
     """メイン関数"""
     parser = create_parser()
@@ -318,7 +397,7 @@ def main():
     if not args.command:
         parser.print_help()
         print("\nエラー: コマンドを指定してください")
-        print("\n利用可能なコマンド: visualize, extract, report, compare")
+        print("\n利用可能なコマンド: visualize, extract, report, compare, reconstruct")
         sys.exit(1)
 
     # コマンドに応じて処理を実行
@@ -330,6 +409,8 @@ def main():
         cmd_report(args)
     elif args.command == 'compare':
         cmd_compare(args)
+    elif args.command == 'reconstruct':
+        cmd_reconstruct(args)
     else:
         print(f"不明なコマンド: {args.command}")
         parser.print_help()

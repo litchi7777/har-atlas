@@ -225,16 +225,27 @@ def generate_grid_experiments(base_config, grid_params):
 
     Returns:
         List of experiment configurations
+
+    Supports two formats for grid_search values:
+    1. Simple list: [value1, value2, ...] - creates cartesian product
+    2. List of dicts: [{key1: v1, key2: v2}, ...] - each dict is one configuration
+       This is useful for paired parameters like backbone + pretrained_path
     """
     experiments = []
 
-    # Flatten grid parameters
+    # Flatten grid parameters, handling list-of-dicts specially
     def flatten_dict(d, parent_key=""):
         items = []
         for k, v in d.items():
             new_key = f"{parent_key}.{k}" if parent_key else k
             if isinstance(v, dict):
+                # Recurse into nested dicts
                 items.extend(flatten_dict(v, new_key))
+            elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
+                # List of dicts: treat each dict as a bundle of settings
+                # Convert [{a: 1, b: 2}, {a: 3, b: 4}] to a single entry
+                # that will be expanded into multiple key-value pairs
+                items.append((new_key, v))  # Keep as list of dicts
             else:
                 items.append((new_key, v))
         return items
@@ -283,17 +294,34 @@ def generate_grid_experiments(base_config, grid_params):
         # グリッドサーチパラメータを記録
         grid_params_dict = {}
         for param_path, value in zip(param_names, combination):
-            # Update config
             keys = param_path.split(".")
-            current = config
-            for key in keys[:-1]:
-                if key not in current:
-                    current[key] = {}
-                current = current[key]
-            current[keys[-1]] = value
 
-            # グリッドサーチパラメータを記録（human-readable形式）
-            grid_params_dict[param_path] = value
+            if isinstance(value, dict):
+                # List-of-dicts case: value is a dict like {backbone: "limu_bert", pretrained_path: "..."}
+                # Apply each key-value pair to the parent path
+                for sub_key, sub_value in value.items():
+                    full_keys = keys + [sub_key]
+                    current = config
+                    for key in full_keys[:-1]:
+                        if key not in current:
+                            current[key] = {}
+                        current = current[key]
+                    current[full_keys[-1]] = sub_value
+
+                    # Record for logging
+                    full_path = f"{param_path}.{sub_key}"
+                    grid_params_dict[full_path] = sub_value
+            else:
+                # Simple value case
+                current = config
+                for key in keys[:-1]:
+                    if key not in current:
+                        current[key] = {}
+                    current = current[key]
+                current[keys[-1]] = value
+
+                # グリッドサーチパラメータを記録（human-readable形式）
+                grid_params_dict[param_path] = value
 
         # Use simple experiment ID
         exp_name = f"exp_{idx}"
